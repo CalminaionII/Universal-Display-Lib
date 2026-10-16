@@ -2650,7 +2650,7 @@ namespace UniversalDisplayLib
             // this mod is single-file — static geometry, psurface markers and animations
             // together, split at tesselation time by `animatedElements` — so it was dead.
             // Removed 2026-07-30.
-            string variantKey = GetBehavior<BEBehaviorUDMaterials>()?.Key ?? "";
+            string variantKey = GetBehavior<BEBehaviorMaterials>()?.Key ?? "";
             return "block:" + Block.Shape?.Base + "|" + variantKey;
         }
 
@@ -2669,7 +2669,7 @@ namespace UniversalDisplayLib
         {
             get
             {
-                var materials = GetBehavior<BEBehaviorUDMaterials>();
+                var materials = GetBehavior<BEBehaviorMaterials>();
                 if (materials == null) return true;
                 if (materials.Types.Count > 0) return true;
                 return _variantWaitTicks > MaxVariantWaitTicks;
@@ -3180,8 +3180,8 @@ namespace UniversalDisplayLib
             // Built on the tesselation thread: a material texture not in the atlas yet is put
             // there on the main thread, which then redraws this block - so wait for it rather
             // than bake in a stand-in.
-            var materialsBlock = Block.GetBehavior<BlockBehaviorUDMaterials>();
-            var materialsBe = GetBehavior<BEBehaviorUDMaterials>();
+            var materialsBlock = Block.GetBehavior<BlockBehaviorMaterials>();
+            var materialsBe = GetBehavior<BEBehaviorMaterials>();
             if (materialsBlock != null && materialsBe != null && !materialsBlock.TexturesReady(capi, materialsBe.Types, Pos)) return;
 
             // A throw here must not cost us the item transforms below, and must not
@@ -3232,8 +3232,8 @@ namespace UniversalDisplayLib
                 .Append(Block.Attributes?["animatedElements"].AsArray<string>(null))
                 .Append(Block.Shape?.IgnoreElements);
 
-            var materialsBlock = Block.GetBehavior<BlockBehaviorUDMaterials>();
-            var materialsBe = GetBehavior<BEBehaviorUDMaterials>();
+            var materialsBlock = Block.GetBehavior<BlockBehaviorMaterials>();
+            var materialsBe = GetBehavior<BEBehaviorMaterials>();
             CompositeShape cshape = (Block.Attributes?["shape"].AsObject<CompositeShape>() ?? Block.Shape);
             if (cshape?.Base == null) return null;
 
@@ -3272,8 +3272,8 @@ namespace UniversalDisplayLib
 
         private ITexPositionSource BuildBlockTextureSource(Shape shape, string nameForLogging)
         {
-            var materialsBlock = Block.GetBehavior<BlockBehaviorUDMaterials>();
-            var materialsBe = GetBehavior<BEBehaviorUDMaterials>();
+            var materialsBlock = Block.GetBehavior<BlockBehaviorMaterials>();
+            var materialsBe = GetBehavior<BEBehaviorMaterials>();
 
             if (materialsBlock == null || materialsBe == null) return capi.Tesselator.GetTextureSource(Block);
 
@@ -3829,7 +3829,11 @@ namespace UniversalDisplayLib
                 }
             }
 
-            string slotId = GetSelectedNonEmptySlotId(forPlayer?.CurrentBlockSelection);
+            // Block info is forwarded to the owner, but the player's selection still points at the host shelf / filler
+            // (an item on the top shelf with another shelf above said nothing - Calm 2026-10-16; fix by Codex). Resolve it
+            // the way a click is, before reading our inventory.
+            BlockSelection aimed = WindowSelection(Api.World.BlockAccessor, forPlayer?.CurrentBlockSelection);
+            string slotId = aimed?.Position?.Equals(Pos) == true ? GetSelectedNonEmptySlotId(aimed) : null;
             if (slotId != null && inv[slotId] is { Empty: false } slot)
             {
                 AppendStoredItemInfo(dsc, slot, perishRate);

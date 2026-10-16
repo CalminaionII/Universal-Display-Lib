@@ -543,6 +543,9 @@ namespace UniversalDisplayLib
 
             UniversalDisplayLibConfig.Load(api);
 
+            // The materials come from the Materials Kit (src/Materials, installed by ../Tools/Materials Kit/install-kit.py - do
+            // not edit those files, rerun the script). Its item models leave out our display-surface markers too.
+            Materials.BlockBehaviorMaterials.ExtraIgnoreElements = block => block.GetBehavior<BlockBehaviorDisplaySurfaces>()?.SurfaceElementNames;
 
             // PICK UP CONFIG CHANGES MADE IN GAME, without a restart. Integrated Mod Manager
             // raises `imm.<modid>` after it rewrites the file; ConfigKit and ConfigLib raise

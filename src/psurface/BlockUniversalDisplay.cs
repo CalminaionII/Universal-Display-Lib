@@ -284,25 +284,65 @@ namespace UniversalDisplayLib
         /// The handbook's "Drops when broken" in the PAGE's materials (Calm, 2026-10-08: a larch / quartz window's
         /// page showed its drop plain). The game builds handbook drops from the block's drop list, which carries
         /// no materials; this gives each drop that uses UDMaterials the page stack's.
+        ///
+        /// THE DROP FLIPS WITH THE RECIPE (Calm, 2026-10-14: "Can we cycle the drop to match the recipe changing"): a block
+        /// made by a material recipe gets one drop per material set, in the recipe slideshow's order (MaterialsSystem
+        /// .CycleCombos, from the page's materials) - the handbook merges drops of one item into ONE flipping icon when the
+        /// item has a handbook groupBy (vsapi SlideshowItemstackTextComponent), so only then; without one they would show
+        /// side by side, and the drop stays the page's own. The two flip on their own one-second timers.
         /// </summary>
         public override BlockDropItemStack[] GetDropsForHandbook(ItemStack handbookStack, IPlayer forPlayer)
         {
             var drops = base.GetDropsForHandbook(handbookStack, forPlayer);
-            var types = Materials.BlockBehaviorUDMaterials.TypesOf(handbookStack?.Attributes);
+            var types = Materials.BlockBehaviorMaterials.TypesOf(handbookStack?.Attributes);
             if (drops == null || types.Count == 0) return drops;
-            return drops.Select(drop =>
+
+            // The handbook asks EVERY block for its drops on EVERY page open (vssurvivalmod GetHandbookInfo, for "Obtained
+            // through") - so the answer is worked out once per page stack and kept (2026-10-14: the handbook lagged).
+            string cacheKey = Materials.BlockBehaviorMaterials.KeyOf(types);
+            lock (handbookDrops)
             {
-                if (drop?.ResolvedItemstack?.Collectible?.GetCollectibleBehavior<Materials.BlockBehaviorUDMaterials>(true) == null) return drop;
-                var copy = drop.Clone();
-                copy.ResolvedItemstack = drop.ResolvedItemstack.Clone();
-                Materials.BlockBehaviorUDMaterials.WriteTypes(copy.ResolvedItemstack.Attributes, types);
-                return copy;
-            }).ToArray();
+                if (handbookDrops.TryGetValue(cacheKey, out var known)) return known;
+            }
+            var made = HandbookDropsFor(drops, types);
+            if (made.Length > drops.Length || (api?.World?.GridRecipes?.Count ?? 0) > 0)
+                lock (handbookDrops) handbookDrops[cacheKey] = made;
+            return made;
+        }
+
+        private readonly System.Collections.Generic.Dictionary<string, BlockDropItemStack[]> handbookDrops = new();
+
+        private BlockDropItemStack[] HandbookDropsFor(BlockDropItemStack[] drops, System.Collections.Generic.IReadOnlyDictionary<string, string> types)
+        {
+            var system = Materials.MaterialsSystem.Instance;
+            var world = api?.World;
+            var result = new System.Collections.Generic.List<BlockDropItemStack>();
+            foreach (var drop in drops)
+            {
+                var collectible = drop?.ResolvedItemstack?.Collectible;
+                if (collectible?.GetCollectibleBehavior<Materials.BlockBehaviorMaterials>(true) == null) { result.Add(drop); continue; }
+
+                var sets = new System.Collections.Generic.List<System.Collections.Generic.IReadOnlyDictionary<string, string>> { types };
+                bool grouped = collectible.Attributes?["handbook"]?["groupBy"]?.Exists == true;
+                if (grouped && system != null && collectible is Block dropBlock && system.MaterialRecipeFor(world, collectible) != null)
+                {
+                    var cycle = system.CycleCombos(world, system.KindsFor(world, dropBlock), collectible.Code?.Domain, types, Materials.MaterialsSystem.MaxHandbookCycle);
+                    if (cycle.Count > 1) sets = cycle.Select(c => (System.Collections.Generic.IReadOnlyDictionary<string, string>)c).ToList();
+                }
+                foreach (var set in sets)
+                {
+                    var copy = drop.Clone();
+                    copy.ResolvedItemstack = drop.ResolvedItemstack.Clone();
+                    Materials.BlockBehaviorMaterials.WriteTypes(copy.ResolvedItemstack.Attributes, set);
+                    result.Add(copy);
+                }
+            }
+            return result.ToArray();
         }
 
         /// <summary>The placed block's materials (UDMaterials), for its drop and middle-click.</summary>
-        private static Materials.BEBehaviorUDMaterials MaterialsAt(IWorldAccessor world, BlockPos pos) =>
-            world.BlockAccessor.GetBlockEntity(pos)?.GetBehavior<Materials.BEBehaviorUDMaterials>();
+        private static Materials.BEBehaviorMaterials MaterialsAt(IWorldAccessor world, BlockPos pos) =>
+            world.BlockAccessor.GetBlockEntity(pos)?.GetBehavior<Materials.BEBehaviorMaterials>();
     }
 }
 

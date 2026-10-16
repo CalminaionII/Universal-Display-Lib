@@ -13,7 +13,7 @@ Give your own blocks display surfaces, let the lib work out every box from your 
 Add it to your `modinfo.json`, because your blocks use its block and block entity classes:
 
 ```json
-"dependencies": { "universaldisplaylib": "1.2.0" }
+"dependencies": { "universaldisplaylib": "1.2.3" }
 ```
 
 **2.** **Mark a surface in your shape**
@@ -255,7 +255,7 @@ Most items need nothing: an item with a vanilla `displayable.shelf` entry alread
 
 ### Materials
 
-One block in every wood, glass, metal or anything else - the lib's own materials system (1.2.0 and later; Attribute Rendering Library is no longer needed, and blocks made with it keep their materials).
+One block in every wood, glass, metal or anything else - the lib's own materials system (1.2.0 and later; recipes by material, the creative and handbook settings and one handbook page per block need 1.2.3; Attribute Rendering Library is no longer needed, and blocks made with it keep their materials).
 
 **Material files.** A list at `assets/<yourmod>/config/universaldisplay/materials/<kind>.json`. The file name is the kind: `wood.json`, `glass.json`, `metal.json`.
 
@@ -275,6 +275,8 @@ One block in every wood, glass, metal or anything else - the lib's own materials
 | `item` | The ingredient that means this material in a recipe - a plank, a pane, an ingot. |
 | `textures` | Its textures by role (`planks`, `debarked`, `pane` ...). A block's `slots` say which of its shape's textures takes which role. |
 | `overlays` | Optional. Overlays this material adds to one of the block's shape textures, whatever fills it - very aged wood dusts the glass. |
+| `source` | Optional (1.2.2 and later). The mod the material counts as, when its `item` is in another domain - Pewter's metal is `game:` but belongs to Pewter. Decides what "modded" means below. |
+| `listedOnly` | Optional, on `*` (1.2.2 and later). Its `item` pattern answers only for LISTED codes - for a pattern that also matches items that are not materials. |
 
 - An entry that names only a `code` takes everything else from the `*` entry.
 
@@ -289,12 +291,34 @@ One block in every wood, glass, metal or anything else - the lib's own materials
 | `fixed` | Shape textures that never change: `{ "handle": "game:block/metal/ingot/brass" }`. |
 | `overlays` | Overlays this block always adds to a shape texture, whatever the material: `{ "frame": [ "game:block/overlay/..." ] }`. |
 | `describe` | The kinds named in the tooltip, in order: `[ "wood", "glass" ]` adds "Oak & Plain glass". |
+| `creative` | 1.2.2 and later. What the creative tab shows: `{ "vanilla": "all", "modded": "one" }`. `vanilla` (the game's materials): `all` every combination (default), `each` each material once, `written` only the stacks you wrote. `modded` (other mods' materials): `none` (default), `each`, `one` stack per mod, `all`. A plain word sets `vanilla` only. |
+| `handbook` | The same choices for the handbook. Left out: what the creative tab shows. |
+| `showMaterials` | Per kind, EXACTLY which materials show: codes, `"vanilla"` or a mod id - `{ "wood": [ "vanilla", "vanillavarnished", "sandalwood" ] }`. Combined by the `vanilla` choice. |
+| `compactHandbook` | `true`: one handbook page for the block, its icon flipping through its stacks. H on a stack still opens it showing that stack. |
+| `handbookMods` | `true`: the page says which mods' materials it can be made with - "Can be made with: Vanilla, Vanilla Varnished" - the installed ones, every kind the block holds. A block made only by stacking blocks that carry their materials (tall windows) gets no line. Lang: `handbook-mods-title`, `handbook-source-game`, `materialkind-name-<kind>`. |
 
-- The block and its stack keep their codes in a `types` tree: `"attributes": { "types": { "wood": "oak", "glass": "plain" } }`. Give each creative list ONE stack - the lib adds one per listed material of each kind.
+- The block and its stack keep their codes in a `types` tree: `"attributes": { "types": { "wood": "oak", "glass": "plain" } }`. Give each creative list ONE stack - the "written" stack the lib builds the rest from. Showing never changes crafting: a recipe takes every material, shown or not.
 
-- **Recipes are written once.** An output with `"attributes": { "types": { "wood": "{wood}" } }` and an ingredient named `wood` (`"name": "wood"` on `game:plank-*`) is a template: the lib copies it for every other mod whose material item fits, so a new wood needs no recipe. In a `copyAttributesFrom` recipe, the planks must be the block's own wood.
+- **One recipe per block (1.2.2 and later).** Unnamed wildcards and a letter-to-kind map:
 
-- **A new material is one patch.** `addeach` onto the materials file, with `dependsOn` the mod it comes from - Window Display adds Biodiversity, Vanilla Varnished and Wildcraft Trees woods this way:
+```json
+{
+  "ingredientPattern": "CBD,BAB,BBB", "width": 3, "height": 3,
+  "ingredients": {
+    "A": { "type": "item", "code": "windowdisplay:glasspane" },
+    "B": { "type": "item", "code": "*:plank-*" },
+    "C": { "type": "item", "code": "game:metalnailsandstrips-*" },
+    "D": { "type": "item", "code": "game:resin" }
+  },
+  "copyAttributesFrom": "A",
+  "attributes": { "udMaterials": { "B": "wood" } },
+  "output": { "type": "block", "code": "windowdisplay:windowdisplay-hopper-closed" }
+}
+```
+
+  `*:plank-*` with no `"name"` stays ONE recipe that takes every mod's planks. The lib lets it match only when each letter holds one material of its kind (all the planks the same wood) and writes the materials onto what is crafted. Different letters can be different kinds - a frame wood and a shelf wood. `copyAttributesFrom` carries another item's materials across (the glass of the pane). Don't use `"name": "wood"` wildcards for these: the game would make one recipe per plank.
+
+- **A new material is one patch.** `addeach` onto the materials file, with `dependsOn` the mod it comes from - Window Display adds Biodiversity, Vanilla Varnished and Wildcraft Trees woods this way. The recipes already take its planks:
 
 ```json
 [
@@ -311,6 +335,10 @@ One block in every wood, glass, metal or anything else - the lib's own materials
   }
 ]
 ```
+
+- **Items can have materials too (1.2.2 and later)** - the same `UDMaterials` behaviour on an item makes one item that comes in every material, drawn in it in the hand, on shelves and in ground piles. Window Display's glass pane is one: `"slots": { "glass": { "glass": "pane" } }`, `"name"` a lang key with `{0}` = the material's name, plus `creative` / `compactHandbook` as on blocks.
+
+- **Handbook pages grouped in JSON** - any block or item, with or without materials: `"attributes": { "handbookGroup": { "by": "types/wood", "title": "yourmod:chair-group", "names": "game:material-{0}" } }` gives one page per wood. `by` is the stack attribute that picks the page (left out: one page for all), `title` a lang key with `{0}`, `names` turns a value into its name.
 
 ### For Code Mods
 
