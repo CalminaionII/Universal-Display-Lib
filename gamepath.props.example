@@ -1,0 +1,8 @@
+<!-- Your PC's Vintage Story folder: the one that contains VintagestoryAPI.dll (with Lib and Mods folders inside).
+     Copy this file to "gamepath.props" (same folder), then change the path below to yours.
+     gamepath.props is in .gitignore, so your own path never goes to GitHub. -->
+<Project>
+	<PropertyGroup>
+		<VintageStoryPath>C:\Program Files\Vintagestory</VintageStoryPath>
+	</PropertyGroup>
+</Project>
