@@ -107,11 +107,12 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// What <see cref="ParseSurfaces"/> last built the grid with, so a change can be
-        /// detected and a no-op rebuild skipped. Static because the answer is the same for
-        /// every block type - they all read one config.
+        /// What <see cref="ParseSurfaces"/> last built THIS block type's grid with, so a change can be
+        /// detected and a no-op rebuild skipped. Per block type, not static (2026-10-22): in singleplayer the
+        /// client and the server each have their own blocks but shared one static, so whichever side rebuilt
+        /// first made the other skip its rebuild and keep the old grid.
         /// </summary>
-        private static bool lastBuiltPrecise = true;
+        private bool builtPrecise = true;
 
         /// <summary>
         /// Bumped every time the grid is rebuilt.
@@ -145,25 +146,26 @@ namespace UniversalDisplayLib
         public static int RebuildAll(ICoreAPI api)
         {
             if (api?.World?.Blocks == null) return -1;
-            if (lastBuiltPrecise == ServerRules.PrecisePlacementOn) return -1;
-
-            GridGeneration++;
+            bool precise = ServerRules.PrecisePlacementOn;
 
             int rebuilt = 0;
             foreach (Block b in api.World.Blocks)
             {
                 var beh = b?.GetBehavior<BlockBehaviorDisplaySurfaces>();
-                if (beh == null) continue;
+                if (beh == null || beh.builtPrecise == precise) continue;
 
                 beh.ParseSurfaces(api);
                 rebuilt++;
             }
 
+            if (rebuilt == 0) return -1;
+            GridGeneration++;
             return rebuilt;
         }
 
         private void ParseSurfaces(ICoreAPI api)
         {
+            builtPrecise = ServerRules.PrecisePlacementOn;   // first, so a block with no shape is not retried every rebuild
             AssetLocation shapePath = block.Shape?.Base?.Clone()
                 .WithPathPrefixOnce("shapes/")
                 .WithPathAppendixOnce(".json");
@@ -187,8 +189,7 @@ namespace UniversalDisplayLib
             // ServerRules, not the local config: on a server this is the server's rule, and
             // asking our own copy is how a client came to draw a 32-grid against a server
             // running a 16 one - see ServerRules.
-            bool precise = ServerRules.PrecisePlacementOn;
-            lastBuiltPrecise = precise;
+            bool precise = builtPrecise;
 
             int steps = precise ? 2 : 1;
 
@@ -1004,7 +1005,9 @@ namespace UniversalDisplayLib
         /// "derived in more than one place" bug again, and this one would show up as an item
         /// that looks right until something else touches it.
         /// </summary>
-        public static void WriteTransform(ICoreClientAPI capi, CollectibleObject collectible, ModelTransform tf)
+        /// <param name="category">The display category to write under; null = the one under the crosshair. The tuner
+        /// passes the category of the item it is pinned to, which the crosshair may have left (2026-10-22).</param>
+        public static void WriteTransform(ICoreClientAPI capi, CollectibleObject collectible, ModelTransform tf, string category = null)
         {
             if (collectible == null || tf == null) return;
 
@@ -1020,7 +1023,7 @@ namespace UniversalDisplayLib
                 root["displayable"] = displayable;
             }
 
-            string category = ResolveEditorCategory(capi);
+            category ??= ResolveEditorCategory(capi);
             if (displayable[category] is not JObject entry)
             {
                 entry = new JObject();
@@ -1603,6 +1606,9 @@ namespace UniversalDisplayLib
 
         // ── Interaction help ────────────────────────────────────────────────
 
+        /// <summary>Whether any pane group can actually open (a box that moves or an open animation).</summary>
+        private bool HasOpenablePane => FrameBoxGroups.Any(g => g.OpenFrameBox != null || g.ClosedFrameBox != null || !string.IsNullOrEmpty(g.AnimOpen));
+
         /// <summary>
         /// Whether clicking this box would move a pane. A fixed part kept in a group of its own with no
         /// pane ("frame1-0" - the tall sash's upper sash, the tall awning's bottom glass) opens nothing,
@@ -1669,7 +1675,11 @@ namespace UniversalDisplayLib
                            || boxId.StartsWith("frame", StringComparison.Ordinal);
             if (!onFrame && !IsSwapAimPoint(this, boxId)) return help;
 
-            if (onFrame && block.Attributes?["canOpen"].AsBool(false) == true && OpensSomething(boxId))
+            // canOpen ABSENT counts as true, as BEUniversalDisplay.CanOpen reads it - such a block does open, so the help
+            // should say so (2026-10-22) - but only when it has a pane that opens, so a plain shelf never offers "Open"
+            JsonObject canOpen = block.Attributes?["canOpen"];
+            bool opens = canOpen?.Exists == true ? canOpen.AsBool(false) : HasOpenablePane;
+            if (onFrame && opens && OpensSomething(boxId))
             {
                 help = help.Append(new WorldInteraction
                 {

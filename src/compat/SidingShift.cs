@@ -20,6 +20,9 @@ namespace UniversalDisplayLib
     {
         static bool looked;
         static MethodInfo gapShiftAt;
+        /// <summary>The same method as a direct call - built once; MethodInfo.Invoke allocates on every call and this
+        /// is asked several times a frame (the ghost, the outlines, every filler's boxes). Null: fall back to Invoke.</summary>
+        static System.Func<BlockPos, Block, ValueTuple<double, double>> direct;
         static bool failed;
 
         public static Vec3f At(BlockPos pos, Block block)
@@ -36,12 +39,20 @@ namespace UniversalDisplayLib
                 }
                 gapShiftAt = t?.GetMethod("GapShiftAt", BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic,
                                           null, new[] { typeof(BlockPos), typeof(Block) }, null);
+                if (gapShiftAt?.ReturnType == typeof(ValueTuple<double, double>))
+                {
+                    try { direct = (System.Func<BlockPos, Block, ValueTuple<double, double>>)gapShiftAt.CreateDelegate(typeof(System.Func<BlockPos, Block, ValueTuple<double, double>>)); }
+                    catch (Exception) { direct = null; }   // Invoke below still works
+                }
             }
             if (gapShiftAt == null) return null;
             try
             {
-                if (gapShiftAt.Invoke(null, new object[] { pos, block }) is ValueTuple<double, double> s && (s.Item1 != 0 || s.Item2 != 0))
-                    return new Vec3f((float)s.Item1, 0f, (float)s.Item2);
+                ValueTuple<double, double> s;
+                if (direct != null) s = direct(pos, block);
+                else if (gapShiftAt.Invoke(null, new object[] { pos, block }) is ValueTuple<double, double> boxed) s = boxed;
+                else return null;
+                if (s.Item1 != 0 || s.Item2 != 0) return new Vec3f((float)s.Item1, 0f, (float)s.Item2);
                 return null;
             }
             catch (Exception)

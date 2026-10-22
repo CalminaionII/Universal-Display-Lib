@@ -308,7 +308,11 @@ namespace UniversalDisplayLib
         /// </summary>
         public static void ForgetAll() => ByPlayer.Clear();
 
-
+        /// <summary>Drop one player's pending nudge (they left).</summary>
+        public static void Forget(string playerUid)
+        {
+            if (playerUid != null) ByPlayer.Remove(playerUid);
+        }
     }
 
     /// <summary>
@@ -574,26 +578,37 @@ namespace UniversalDisplayLib
         private static void ApplyConfigReload(ICoreAPI api, string savedBy)
         {
             var c0 = UniversalDisplayLibConfig.Current;
-            var was = (c0.HeightLimitVoxels, c0.PrecisePlacement, c0.AllowItemOverlap, c0.RoomSafeOpening, c0.SizeMinPercent, c0.SizeMaxPercent);
+            var was = RulesOf(c0);
 
             if (!UniversalDisplayLibConfig.Reload(api)) return;
 
             if (api.Side == EnumAppSide.Server)
             {
-                var c1 = UniversalDisplayLibConfig.Current;
-                var now = (c1.HeightLimitVoxels, c1.PrecisePlacement, c1.AllowItemOverlap, c1.RoomSafeOpening, c1.SizeMinPercent, c1.SizeMaxPercent);
+                var now = RulesOf(UniversalDisplayLibConfig.Current);
 
                 // NOTHING TO SAY IF NO SERVER RULE CHANGED. The managers forward a client's
                 // save to the server whenever an ADMIN saves - their own client settings
                 // included - so without this the server announced a reload, re-pushed the
                 // rules and rebuilt the grid for a file that had not moved.
-                if (now == was)
+                //
+                // Compared with what the server last TOLD its players, not with the config
+                // a moment ago (2026-10-22). In singleplayer the client and the server share
+                // ONE config object, and the client reloads first - so "a moment ago" was
+                // already the new file and every change looked like no change.
+                if (now == (lastServerRules ?? was))
                 {
                     api.Logger.VerboseDebug("[UniversalDisplayLib] Server: config re-read, no server rule changed.");
                     return;
                 }
+                lastServerRules = now;
 
                 PlacementLimitsPacket rules = ServerRulesPacket();
+
+                // The server reads these rules too, and in singleplayer it shares them with
+                // the client, which still holds the ones it was told on joining. Set them
+                // now so the grid rebuilt below uses the new ones. On a dedicated server
+                // they are simply the server's own config.
+                ApplyRules(rules);
 
                 foreach (IPlayer p in api.World.AllOnlinePlayers)
                 {
@@ -715,6 +730,28 @@ namespace UniversalDisplayLib
             api.RegisterBlockBehaviorClass("WindowSurfaces", typeof(BlockBehaviorDisplaySurfaces));
         }
 
+        /// <summary>The server rules last pushed to players (server side); null before the first.</summary>
+        private static (float, bool, bool, bool, int, int)? lastServerRules;
+
+        private static (float, bool, bool, bool, int, int) RulesOf(UniversalDisplayLibConfig c)
+            => (c.HeightLimitVoxels, c.PrecisePlacement, c.AllowItemOverlap, c.RoomSafeOpening, c.SizeMinPercent, c.SizeMaxPercent);
+
+        /// <summary>
+        /// Take the server's rules into the shared statics. The client does this when told; the
+        /// server does it on a reload (see ApplyConfigReload). ONE copy of the assignments.
+        /// </summary>
+        private static void ApplyRules(PlacementLimitsPacket packet)
+        {
+            PlacementHeight.ServerLimit = Math.Clamp(packet.HeightLimitVoxels, 1f, 16f);
+            ServerRules.AllowOverlap = packet.AllowItemOverlap;
+            ServerRules.RoomSafe = packet.RoomSafeOpening;
+            ServerRules.Precise = packet.PrecisePlacement;
+            // 0 = an older lib that does not send them: keep this side's own
+            PlacementScale.ServerMinPercent = packet.SizeMinPercent > 0 ? Math.Clamp(packet.SizeMinPercent, 10, 100) : null;
+            PlacementScale.ServerMaxPercent = packet.SizeMaxPercent > 0 ? Math.Clamp(packet.SizeMaxPercent, 100, 400) : null;
+            PlacementScale.Local = PlacementScale.Clamp(PlacementScale.Local);
+        }
+
         /// <summary>
         /// The server's rules as they stand right now. ONE builder, used by both the join
         /// push and the reload push, so the two cannot come to disagree.
@@ -741,6 +778,8 @@ namespace UniversalDisplayLib
             MeasuredItemSizes.ForgetAll();
             WornShapeMesh.ForgetAll();
             BlockBehaviorDisplaySurfaces.ForgetDisplayData();
+            BEUniversalDisplay.ForgetServerInstances();
+            lastServerRules = UniversalDisplayLibConfig.Current == null ? null : RulesOf(UniversalDisplayLibConfig.Current);
 
             // TELL EACH PLAYER THE LIMIT AS THEY ARRIVE. The step is theirs; the limit is
             // ours, because the height is stored on the block and everyone sees it. Without
@@ -765,8 +804,7 @@ namespace UniversalDisplayLib
                 {
                     if (packet?.SlotId == null) return;
                     var pos = new BlockPos(packet.X, packet.Y, packet.Z);
-                    // range check, as the height and rotate packets: a client-supplied position
-                    if (player?.Entity == null || player.Entity.Pos.AsBlockPos.DistanceTo(pos) > 12) return;
+                    if (!MayEditStoredItem(api, player, pos, packet.SlotId)) return;
                     if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
                         be.AdjustStoredItemScale(packet.SlotId, packet.Down, player);
                 })
@@ -779,14 +817,7 @@ namespace UniversalDisplayLib
                     if (packet?.SlotId == null) return;
 
                     var pos = new BlockPos(packet.X, packet.Y, packet.Z);
-
-                    // Range check for the same reason the rotate packet has one: this is a
-                    // client-supplied position, and without it a malformed or hostile packet
-                    // could move an item in a window anywhere in the world.
-                    if (player?.Entity == null || player.Entity.Pos.AsBlockPos.DistanceTo(pos) > 12)
-                    {
-                        return;
-                    }
+                    if (!MayEditStoredItem(api, player, pos, packet.SlotId)) return;
 
                     if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
                     {
@@ -798,20 +829,37 @@ namespace UniversalDisplayLib
                     if (packet?.SlotId == null) return;
 
                     var pos = new BlockPos(packet.X, packet.Y, packet.Z);
-
-                    // Range check, because this is a client-supplied position: without it a
-                    // malformed or hostile packet could turn an item in a window anywhere in
-                    // the world. 12 blocks is comfortably beyond normal reach.
-                    if (player?.Entity == null || player.Entity.Pos.AsBlockPos.DistanceTo(pos) > 12)
-                    {
-                        return;
-                    }
+                    if (!MayEditStoredItem(api, player, pos, packet.SlotId)) return;
 
                     if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
                     {
                         be.RotateStoredItem(packet.SlotId, player, packet.Reverse, packet.StepDeg);
                     }
                 });
+
+            // The per-player pending turn / nudge / size go with the player, so a long-running
+            // server does not keep one entry for everyone who ever joined.
+            api.Event.PlayerDisconnect += byPlayer =>
+            {
+                PlacementRotation.Remember(byPlayer?.PlayerUID, 0, pending: false);
+                PlacementHeight.Forget(byPlayer?.PlayerUID);
+                PlacementScale.Remember(byPlayer?.PlayerUID, 1f);
+            };
+        }
+
+        /// <summary>
+        /// Server: the checks every "change an item already on a display" packet passes before it
+        /// is acted on. The position and slot id come from the client, so: a sane slot id,
+        /// within 12 blocks (comfortably beyond normal reach), and - the part
+        /// that was missing until 2026-10-22 - LAND CLAIMS. A right-click on a display always asked
+        /// the claim; the mouse wheel did not, so anyone could turn, raise or resize the items on
+        /// a display inside someone else's claim. TryAccess tells the player why itself.
+        /// </summary>
+        private static bool MayEditStoredItem(ICoreServerAPI api, IServerPlayer player, BlockPos pos, string slotId)
+        {
+            if (slotId == null || slotId.Length > 128 || player?.Entity == null) return false;
+            if (player.Entity.Pos.AsBlockPos.DistanceTo(pos) > 12) return false;
+            return api.World.Claims.TryAccess(player, pos, EnumBlockAccessFlags.Use);
         }
 
         public override void StartClientSide(ICoreClientAPI api)
@@ -888,6 +936,7 @@ namespace UniversalDisplayLib
             ServerRules.Forget();
             BlockBehaviorDisplaySurfaces.ForceFootprintBox = false;
             BEUniversalDisplay.LiveClientInstances.Clear();
+            BEUniversalDisplay.ForgetBlockLookups();
             DisplaySoundHandler.ResetShared();
 
             // The size editor's state, both halves. Carrying either into a new world would
@@ -951,14 +1000,7 @@ namespace UniversalDisplayLib
                 {
                     if (packet == null) return;
 
-                    PlacementHeight.ServerLimit = Math.Clamp(packet.HeightLimitVoxels, 1f, 16f);
-                    ServerRules.AllowOverlap = packet.AllowItemOverlap;
-                    ServerRules.RoomSafe = packet.RoomSafeOpening;
-                    ServerRules.Precise = packet.PrecisePlacement;
-                    // 0 = an older lib that does not send them: keep this side's own
-                    PlacementScale.ServerMinPercent = packet.SizeMinPercent > 0 ? Math.Clamp(packet.SizeMinPercent, 10, 100) : null;
-                    PlacementScale.ServerMaxPercent = packet.SizeMaxPercent > 0 ? Math.Clamp(packet.SizeMaxPercent, 100, 400) : null;
-                    PlacementScale.Local = PlacementScale.Clamp(PlacementScale.Local);
+                    ApplyRules(packet);
 
                     // The grid was built at block load, before we knew any of this, so the
                     // value alone changes nothing - it has to be rebuilt. Returns -1 and does

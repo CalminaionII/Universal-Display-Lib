@@ -414,7 +414,7 @@ namespace UniversalDisplayLib
             // why the shared path is actively wrong for clutter.
             if (!BlockBehaviorDisplaySurfaces.WriteTypedTransform(target, targetType, targetCategory, tf))
             {
-                BlockBehaviorDisplaySurfaces.WriteTransform(capi, target, tf);
+                BlockBehaviorDisplaySurfaces.WriteTransform(capi, target, tf, targetCategory);
             }
 
             TuningFiles.RecordTransform(capi, target, tf, targetCategory, targetType);

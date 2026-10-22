@@ -69,6 +69,8 @@ namespace UniversalDisplayLib
         /// <summary>Faces the window at the player, snapped to 90°.</summary>
         private static float SnapPlacementAngle(IPlayer byPlayer, BlockSelection blockSel)
         {
+            // placed by something that is not a player (another mod's code, a command): no one to face
+            if (byPlayer?.Entity?.Pos == null || blockSel?.HitPosition == null) return 0f;
             BlockPos pos = blockSel.DidOffset ? blockSel.Position.AddCopy(blockSel.Face.Opposite) : blockSel.Position;
             double dx = byPlayer.Entity.Pos.X - (pos.X + blockSel.HitPosition.X);
             double dz = byPlayer.Entity.Pos.Z - (pos.Z + blockSel.HitPosition.Z);
