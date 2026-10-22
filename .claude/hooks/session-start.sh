@@ -8,7 +8,7 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
 fi
 
 # Keep in step with the game version the mod is built against.
-VS_VERSION="1.22.3"
+VS_VERSION="1.22.7"
 VS_DIR="$HOME/vintagestory-$VS_VERSION"
 
 # 1. The .NET 10 SDK, from Ubuntu's own package archive.

@@ -137,8 +137,10 @@ namespace UniversalDisplayLib
         private int _paneStateBlockId = -1;
         private long _clientTickListener;
 
-        private CollectibleObject _nowTesselatingObj;
-        private Shape _nowTesselatingShape;
+        // [ThreadStatic]: item meshes are built on the tesselation thread AND the main thread (the ghost), and the
+        // texture lookup below reads these while TesselateItem runs on the same thread that set them (2026-10-22).
+        [ThreadStatic] private static CollectibleObject _nowTesselatingObj;
+        [ThreadStatic] private static Shape _nowTesselatingShape;
 
         public byte[] CachedLightHsv => IsEmbedded ? embeddedEffects.Light : _cachedLightHsv;
 
@@ -146,8 +148,12 @@ namespace UniversalDisplayLib
 
         public string AttributeTransformCode => BlockBehaviorDisplaySurfaces.TransformTarget;
 
-        protected Dictionary<string, MeshData> MeshCache =>
-            ObjectCacheUtil.GetOrCreate(Api, "universaldisplaylib-itemmeshes", () => new Dictionary<string, MeshData>());
+        /// <summary>
+        /// Concurrent (2026-10-22): written from the tesselation thread (GenerateMeshes) and the main thread (the ghost,
+        /// floating items, the editor's Clear) at the same time - a plain Dictionary can corrupt itself under that.
+        /// </summary>
+        protected ConcurrentDictionary<string, MeshData> MeshCache =>
+            ObjectCacheUtil.GetOrCreate(Api, "universaldisplaylib-itemmeshes", () => new ConcurrentDictionary<string, MeshData>());
 
         /// <summary>MeshCache keys whose mesh is the item's ordinary model, drawn while its own mesh source had nothing yet.</summary>
         ConcurrentDictionary<string, byte> StandInMeshes =>
@@ -799,6 +805,9 @@ namespace UniversalDisplayLib
 
             return block.ParticleProperties;
         }
+
+        /// <summary>World start: the lookups below hold the last world's Block objects.</summary>
+        public static void ForgetBlockLookups() => _blockBehindItem.Clear();
 
         /// <summary>Resolved item -> block lookups. Blocks never change after load.</summary>
         private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, Block> _blockBehindItem
@@ -1897,7 +1906,8 @@ namespace UniversalDisplayLib
             if (loc.IsPlacedItem)
             {
                 string direct = blockSel.SelectionBoxId.Substring(DisplaySlotId.PlacedPrefix.Length);
-                if (inv[direct] != null && !inv[direct].Empty) return direct;
+                // TryGetValue, not inv[...]: the indexer CREATES a slot for an id that is not there
+                if (inv.SlotsByslotId.TryGetValue(direct, out ItemSlot directSlot) && directSlot is { Empty: false }) return direct;
             }
 
             // Falling back from a pad box, which always reports Y 0. Content cuboids span
@@ -2459,8 +2469,20 @@ namespace UniversalDisplayLib
             if (JitterSuppressed) return 0f;
             if (dattr == null || dattr.RandYRotAngle <= 0) return 0f;
 
-            return GameMath.MurmurHash3Mod(Pos.X, Pos.Y + slotId.GetHashCode(), Pos.Z,
+            return GameMath.MurmurHash3Mod(Pos.X, Pos.Y + StableHash(slotId), Pos.Z,
                        dattr.RandYRotAngle + 1) - dattr.RandYRotAngle / 2;
+        }
+
+        /// <summary>
+        /// FNV-1a of a slot id - the same number in every game process. string.GetHashCode is NOT: .NET seeds it
+        /// differently each launch, so the jitter angle it fed changed on every restart and could differ between a
+        /// server and its clients (fixed 2026-10-22). Same reasoning as WornShapeMesh.Fnv and StartFloat.
+        /// </summary>
+        private static int StableHash(string s)
+        {
+            uint h = 2166136261;
+            foreach (char c in s ?? "") { h ^= c; h *= 16777619; }
+            return (int)h;
         }
 
         /// <summary>Same value, resolved from the slot when the caller has no dattr to hand.</summary>
@@ -2545,7 +2567,8 @@ namespace UniversalDisplayLib
             {
                 var freeLoc=DisplaySlotId.Decode(slotId);
                 var plane=SurfaceBehavior?.GetSurface(freeLoc.SurfaceIndex);
-                var props=BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(inv[slotId],plane.DisplayCategory);
+                if (plane == null || !inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot freeSlot)) return false;
+                var props=BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(freeSlot,plane.DisplayCategory);
                 return FreePlacementFits(freeLoc,props,rotDeg,ChosenHeightVoxels(slotId),null);
             }
             if (IsEmbedded) return EmbeddedEditFits(slotId, rotDeg, null, null);
@@ -2597,7 +2620,8 @@ namespace UniversalDisplayLib
         public bool RotateStoredItem(string slotId, IPlayer byPlayer, bool reverse, float stepDeg = 0f)
         {
             if (IsEmbedded && byPlayer != null && !Api.World.Claims.TryAccess(byPlayer, Pos, EnumBlockAccessFlags.Use)) return false;
-            if (slotId == null || inv[slotId] is not { Empty: false }) return false;
+            // TryGetValue, not inv[...]: the id comes from a client packet, and the indexer would CREATE a slot for it
+            if (slotId == null || !inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot stored) || stored is not { Empty: false }) return false;
 
             // A locked design does not turn. "Once placed is placed" has to cover this and
             // the nudge as well as taking, or a chiselled insert can still be spun in its
@@ -2650,7 +2674,8 @@ namespace UniversalDisplayLib
             if (freeStacks.ContainsKey(slotId))
             {
                 var freeLoc=DisplaySlotId.Decode(slotId);
-                var plane=SurfaceBehavior.GetSurface(freeLoc.SurfaceIndex);
+                var plane=SurfaceBehavior?.GetSurface(freeLoc?.SurfaceIndex ?? -1);
+                if (plane == null) return false;
                 var props=BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(slot,plane.DisplayCategory);
                 if (!FreePlacementFits(freeLoc,props,ChosenRotationDeg(slotId),wanted,player)) return true;
             }
@@ -4571,6 +4596,9 @@ namespace UniversalDisplayLib
         /// <summary>Server: every display block entity in loaded chunks (Universal Ground Storage's /ugs revert walks its piles).</summary>
         public static IEnumerable<BEUniversalDisplay> LoadedOnServer => LiveServerInstances.Keys;
 
+        /// <summary>Server start: a static outlives a world, so the last world's windows must not be walked in this one.</summary>
+        public static void ForgetServerInstances() => LiveServerInstances.Clear();
+
         Cuboidf[] ItemBoxesIn((int, int, int) key)
         {
             // current boxes - unless asked from inside this window's own rebuild (a guest asking back), or from where a
@@ -5331,10 +5359,14 @@ namespace UniversalDisplayLib
         {
             if (string.IsNullOrEmpty(code) || speed <= 0 || Api == null) return 0.5f;
             AssetLocation path = Block?.Shape?.Base?.Clone().WithPathPrefixOnce("shapes/").WithPathAppendixOnce(".json");
-            Shape shape = path == null ? null : Api.Assets.TryGet(path)?.ToObject<Shape>();
-            Animation anim = shape?.Animations?.FirstOrDefault(a => a.Code == code);
-            return anim == null ? 0.5f : anim.QuantityFrames / 30f / speed;
+            if (path == null) return 0.5f;
+            // the frame count, read from the shape file once per animation rather than parsing the file every call
+            int frames = AnimFrames.GetOrAdd(path + "|" + code, _ =>
+                Api.Assets.TryGet(path)?.ToObject<Shape>()?.Animations?.FirstOrDefault(a => a.Code == code)?.QuantityFrames ?? -1);
+            return frames < 0 ? 0.5f : frames / 30f / speed;
         }
+
+        static readonly ConcurrentDictionary<string, int> AnimFrames = new();
 
         /// <summary>
         /// Server: a long creak from this window without it moving (Calm: "add in the occasional random creak"). False if it

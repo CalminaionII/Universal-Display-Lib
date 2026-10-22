@@ -53,6 +53,9 @@ namespace UniversalDisplayLib
         /// <code>uniform float alphaTest = 0.001;</code>
         /// </summary>
         private const float GhostAlphaTest = 0.05f;
+
+        /// <summary>How many ghost meshes are kept on the GPU before the lot is dropped and rebuilt as needed.</summary>
+        private const int MaxUploaded = 128;
         private const float DefaultAlphaTest = 0.001f;
 
         public double RenderOrder => 0.5;
@@ -104,7 +107,10 @@ namespace UniversalDisplayLib
         {
             if (UniversalDisplayLibConfig.Current?.PlacementGhost != true) return;
 
-            if (seenGeneration != staleGeneration)
+            // A CEILING ON THE KEPT MESHES (2026-10-22): one GPU mesh per item (and per contents) ever held, for the whole
+            // session, grew without end on a long play. Past the ceiling they all go and the ones in use come back on
+            // the next frame - one upload, not a stutter.
+            if (seenGeneration != staleGeneration || uploaded.Count > MaxUploaded)
             {
                 seenGeneration = staleGeneration;
                 foreach (MultiTextureMeshRef meshRef in uploaded.Values) meshRef?.Dispose();

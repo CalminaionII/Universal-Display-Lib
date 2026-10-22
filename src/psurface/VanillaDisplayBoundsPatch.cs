@@ -45,7 +45,9 @@ namespace UniversalDisplayLib
 
             _capi = capi;
             _harmony = new Harmony(HarmonyId);
-            _harmony.PatchAll(typeof(VanillaDisplayBoundsPatch).Assembly);
+            // ONLY this guard - PatchAll on the whole assembly would apply every [HarmonyPatch] class in the mod,
+            // including any added later without meaning it to run here (the Materials Kit avoids the attribute for that)
+            _harmony.CreateClassProcessor(typeof(PlacingItemsPreviewGuard)).Patch();
         }
 
         public static void Remove()

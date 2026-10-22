@@ -212,6 +212,7 @@ namespace UniversalDisplayLib
                     {
                         existing.sound.FadeOutAndStop(FadeSpeed);
                         SharedSounds.Remove("rain");
+                        DisposeAfterFade(existing.sound);
                     }
                     return;
                 }
@@ -272,6 +273,18 @@ namespace UniversalDisplayLib
             ClimateCondition cond = _capi.World.BlockAccessor.GetClimateAt(ownerPos, EnumGetClimateMode.NowValues);
             float intensity = Math.Clamp(cond?.Rainfall ?? 0f, 0f, 1.5f);
             return Math.Clamp(UniversalDisplayLibConfig.Current.RainSoundVolumeValue * intensity, 0f, 2f);
+        }
+
+        /// <summary>
+        /// Frees a sound once its fade-out has had time to finish. The rain loop is loaded with DisposeOnFinish false
+        /// and a faded-out sound has not "finished", so without this every stop of the rain (it ending, or the player
+        /// walking out of range) left one sound behind for the rest of the session (fixed 2026-10-22).
+        /// </summary>
+        private void DisposeAfterFade(ILoadedSound sound)
+        {
+            if (sound == null || _capi == null) return;
+            int ms = (int)(FadeSpeed * 1000f) + 500;
+            _capi.Event.RegisterCallback(_ => TryDisposeSound(sound), ms);
         }
 
         private void TryDisposeSound(ILoadedSound sound)

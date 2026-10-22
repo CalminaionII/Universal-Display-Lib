@@ -119,6 +119,11 @@ namespace UniversalDisplayLib
         {
             if (packet?.Key == null || packet.Key.Length > 400) return;
             if (!Sane(packet.Width) || !Sane(packet.Height) || !Sane(packet.Length)) return;
+            // A key a client sends must name an item this server actually has, and there is a ceiling on how many
+            // are kept (2026-10-22): otherwise a buggy or hostile client could fill the server's memory with made-up
+            // keys, each one making every loaded display rebuild its boxes.
+            if (sizes.Count >= MaxServerSizes && !sizes.ContainsKey(packet.Key)) return;
+            if (!NamesRealItem(player?.Entity?.World, packet.Key)) return;
             if (Store(packet.Key, new Size3f(packet.Width, packet.Height, packet.Length), packet.StandIn))
             {
                 BlockBehaviorDisplaySurfaces.BumpGeneration();
@@ -150,6 +155,19 @@ namespace UniversalDisplayLib
         }
 
         static readonly object storeLock = new();
+
+        /// <summary>The most item sizes the server keeps from clients - far more than any modpack's displayable items.</summary>
+        const int MaxServerSizes = 20000;
+
+        /// <summary>Whether a key (KeyOf: the item code first, then "|...") starts with the code of a real item or block.</summary>
+        static bool NamesRealItem(IWorldAccessor world, string key)
+        {
+            if (world == null) return false;
+            int bar = key.IndexOf('|');
+            if (bar <= 0) return false;
+            var code = new AssetLocation(key.Substring(0, bar));
+            return world.GetItem(code) != null || world.GetBlock(code) != null;
+        }
 
         static readonly float[] Identity = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1 };
 
