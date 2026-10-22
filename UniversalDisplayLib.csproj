@@ -51,41 +51,52 @@
 	     one being packaged. Do not re-add this Include without moving the assets back and
 	     changing package2.py to match - one source, or the question returns. -->
 
+	<!-- WHERE THE GAME DLLS ARE.
+
+	     On your PC nothing changes: the default below is the same install folder the
+	     references always pointed at. The cloud (Claude Code on the web) has no game
+	     installed, so its startup script (.claude/hooks/session-start.sh) downloads one
+	     and sets the VINTAGE_STORY environment variable to that folder, which wins here. -->
+	<PropertyGroup>
+		<VintageStoryPath Condition="'$(VINTAGE_STORY)' != ''">$(VINTAGE_STORY)</VintageStoryPath>
+		<VintageStoryPath Condition="'$(VintageStoryPath)' == ''">..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3</VintageStoryPath>
+	</PropertyGroup>
+
 	<ItemGroup>
 		<Reference Include="0Harmony">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Lib\0Harmony.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Lib\0Harmony.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="Newtonsoft.Json">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Lib\Newtonsoft.Json.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Lib\Newtonsoft.Json.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="protobuf-net">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Lib\protobuf-net.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Lib\protobuf-net.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="SkiaSharp">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Lib\SkiaSharp.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Lib\SkiaSharp.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="Vintagestory">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Vintagestory.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Vintagestory.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="VintagestoryAPI">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\VintagestoryAPI.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\VintagestoryAPI.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="VintagestoryLib">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\VintagestoryLib.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\VintagestoryLib.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="VSEssentials">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Mods\VSEssentials.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Mods\VSEssentials.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 		<Reference Include="VSSurvivalMod">
-			<HintPath>..\..\..\..\..\Games\Vintage Story\Vintage Story Launcher\Vintage Story Versions\1.22.3\Mods\VSSurvivalMod.dll</HintPath>
+			<HintPath>$(VintageStoryPath)\Mods\VSSurvivalMod.dll</HintPath>
 			<Private>False</Private>
 		</Reference>
 	</ItemGroup>
