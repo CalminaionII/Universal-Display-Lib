@@ -37,10 +37,16 @@ namespace UniversalDisplayLib
     /// for a plain class and throws "Type is not expected, and no contract can be inferred"
     /// the first time it is sent — which took the client down on the first key press.
     /// </summary>
-    [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
+    [ProtoContract]
     public class PlacementRotationPacket
     {
-        public int Deg;
+        [ProtoMember(1)] public int Deg;
+        [ProtoMember(2)] public int X;
+        [ProtoMember(3)] public int Y;
+        [ProtoMember(4)] public int Z;
+        [ProtoMember(5)] public int Dimension;
+        [ProtoMember(6)] public string PlacedSlot;
+        [ProtoMember(7)] public bool Pending;
     }
 
     /// <summary>
@@ -135,6 +141,10 @@ namespace UniversalDisplayLib
 
         /// <summary>See ServerRules.PrecisePlacementOn - receiving this rebuilds the grid.</summary>
         public bool PrecisePlacement;
+
+        /// <summary>How small / big an item may be made (lib 1.4.0). See PlacementScale.Min.</summary>
+        public int SizeMinPercent;
+        public int SizeMaxPercent;
     }
 
     /// <summary>
@@ -297,6 +307,8 @@ namespace UniversalDisplayLib
         /// have their first placement in the next world arrive silently offset.
         /// </summary>
         public static void ForgetAll() => ByPlayer.Clear();
+
+
     }
 
     /// <summary>
@@ -332,15 +344,18 @@ namespace UniversalDisplayLib
 
         /// <summary>Client side: this player's own pending angle.</summary>
         public static int Local;
+        public static bool LocalPending;
 
         private static readonly System.Collections.Generic.Dictionary<string, int> ByPlayer =
             new System.Collections.Generic.Dictionary<string, int>();
 
         public static int Normalise(int deg) => ((deg % 360) + 360) % 360;
 
-        public static void Remember(string playerUid, int deg)
+        public static void Remember(string playerUid, int deg, bool pending = true)
         {
-            if (playerUid != null) ByPlayer[playerUid] = Normalise(deg);
+            if (playerUid == null) return;
+            if (pending) ByPlayer[playerUid] = Normalise(deg);
+            else ByPlayer.Remove(playerUid);
         }
 
         /// <summary>
@@ -356,10 +371,15 @@ namespace UniversalDisplayLib
         /// without another packet.
         /// </summary>
         public static void ResetAfterPlacing(ICoreAPI api, IPlayer player)
+            => ResetAfterPlacing(api, player, null, null);
+
+        public static void ResetAfterPlacing(ICoreAPI api, IPlayer player, BlockPos placedAt, string placedSlot)
         {
             if (api?.Side == EnumAppSide.Client)
             {
+                PlacementGhostRenderer.PlacementCommitted(placedAt, placedSlot);
                 Local = 0;
+                LocalPending = false;
                 return;
             }
 
@@ -374,7 +394,7 @@ namespace UniversalDisplayLib
             // which is the same reasoning as sending the angle in the first place.
             if (player is IServerPlayer sp)
             {
-                UniversalDisplayLibMod.ServerChannel?.SendPacket(new PlacementRotationPacket { Deg = 0 }, sp);
+                UniversalDisplayLibMod.ServerChannel?.SendPacket(new PlacementRotationPacket { Deg = 0, X = placedAt?.X ?? 0, Y = placedAt?.Y ?? 0, Z = placedAt?.Z ?? 0, Dimension = placedAt?.dimension ?? 0, PlacedSlot = placedSlot }, sp);
             }
         }
 
@@ -382,6 +402,9 @@ namespace UniversalDisplayLib
         /// The angle to use for a placement. A player who has never sent one gets 0, which is
         /// the previous behaviour — nothing changes until someone actually uses the key.
         /// </summary>
+        public static bool HasPending(ICoreAPI api, IPlayer player) => api?.Side == EnumAppSide.Client
+            ? LocalPending || Local != 0 : player != null && ByPlayer.ContainsKey(player.PlayerUID);
+
         public static int For(ICoreAPI api, IPlayer player)
         {
             if (api?.Side == EnumAppSide.Client) return Normalise(Local);
@@ -399,6 +422,24 @@ namespace UniversalDisplayLib
         /// Server start is the honest point to do it: no player can have a pending angle yet.
         /// </summary>
         public static void ForgetAll() => ByPlayer.Clear();
+
+        /// <summary>Face the player with the model's +Z front, relative to its host and surface.</summary>
+        public static int FacingPlayer(double dx, double dz, float hostDegrees, float surfaceDegrees)
+        {
+            double worldDegrees = Math.Round(Math.Atan2(dx, dz) * 180 / Math.PI / 90) * 90;
+            return Normalise((int)Math.Round(worldDegrees - hostDegrees - surfaceDegrees));
+        }
+
+        public static int ForSurface(ICoreAPI api, IPlayer player, BEUniversalDisplay display, DisplaySurface surface)
+        {
+            player ??= (api as ICoreClientAPI)?.World.Player;
+            if (HasPending(api, player)) return For(api, player);
+            if (player?.Entity?.Pos == null || display?.Pos == null || surface == null) return 0;
+            return FacingPlayer(player.Entity.Pos.X - display.Pos.X - .5,
+                player.Entity.Pos.Z - display.Pos.Z - .5,
+                display.MeshAngleRad * GameMath.RAD2DEG + (display.Block?.Shape?.rotateY ?? 0f),
+                display.SurfaceFacingDeg(surface));
+        }
     }
 
     public class UniversalDisplayLibMod : ModSystem
@@ -418,6 +459,31 @@ namespace UniversalDisplayLib
         /// settled rule: ORing the two made the swap modifier depend on the player's own
         /// keybinds and look intermittent.
         /// </summary>
+        /// <summary>Controls-menu entries for the wheel modifiers (turn + height lib 1.3.1, now 1.4.0; resize lib 1.4.0). Registered in StartClientSide.</summary>
+        public const string TurnHotKey = "universaldisplaylib-turn";
+        public const string HeightHotKey = "universaldisplaylib-height";
+        public const string ScaleHotKey = "universaldisplaylib-scale";
+
+        /// <summary>
+        /// Is the key bound to this Controls entry held right now? Read straight from the keyboard state rather than
+        /// through IsHotKeyPressed, so a binding of the plain Ctrl / Shift / Alt key itself is seen while that key is
+        /// down. A modifier written into the binding (Ctrl + X) must be held too. Mouse-button bindings are not
+        /// supported here (false).
+        /// </summary>
+        internal static bool HotKeyHeld(ICoreClientAPI capi, string code)
+        {
+            KeyCombination map = capi?.Input?.GetHotKeyByCode(code)?.CurrentMapping;
+            bool[] keys = capi?.Input?.KeyboardKeyState;
+            if (map == null || keys == null) return false;
+            bool Down(int key) => key >= 0 && key < keys.Length && keys[key];
+            if (!Down(map.KeyCode)) return false;
+            if (map.SecondKeyCode is int second && !Down(second)) return false;
+            if (map.Ctrl && !(Down((int)GlKeys.ControlLeft) || Down((int)GlKeys.ControlRight))) return false;
+            if (map.Alt && !(Down((int)GlKeys.AltLeft) || Down((int)GlKeys.AltRight))) return false;
+            if (map.Shift && !(Down((int)GlKeys.ShiftLeft) || Down((int)GlKeys.ShiftRight))) return false;
+            return true;
+        }
+
         private void OnMouseWheel(MouseWheelEventArgs args)
         {
             if (args.delta == 0 || capi == null) return;
@@ -429,18 +495,26 @@ namespace UniversalDisplayLib
             // existed. ShiftKey/CtrlKey are the modifier KEYS rather than the Sneak/Sprint
             // ACTIONS — the settled rule in this file, because ORing an action with a key
             // made the modifier depend on the player's own keybinds and look intermittent.
+            // REMAPPABLE (Calm, 2026-10-19: "Sneak throws off the position ... Make them remappable"): the two keys are
+            // their own entries in the game's Controls menu, read as KEYS (HotKeyHeld) - default Left Ctrl / Left Shift,
+            // the game's own Sprint / Sneak defaults - so a player can move height off the key that crouches them.
             bool handled;
-            if (controls.CtrlKey)
+            if (HotKeyHeld(capi, TurnHotKey))
             {
                 // Same modifier, two jobs, chosen by what is under the crosshair: a pad turns
                 // the item you are ABOUT to place, an item already there turns THAT. Reads as
                 // one gesture, and neither can be reached while pointing at the other.
                 handled = TryWheelRotate(capi, args.delta > 0);
             }
-            else if (controls.ShiftKey)
+            else if (HotKeyHeld(capi, HeightHotKey))
             {
                 // Sneak + wheel, the height twin of the above and split the same way.
                 handled = TryWheelHeight(capi, args.delta > 0);
+            }
+            else if (HotKeyHeld(capi, ScaleHotKey))
+            {
+                // Resize + wheel (lib 1.4.0), split the same way: a pad sizes the item about to be placed, an item THAT one.
+                handled = TryWheelScale(capi, args.delta > 0);
             }
             else return;
 
@@ -470,9 +544,10 @@ namespace UniversalDisplayLib
         /// </summary>
         private void OnActiveSlotChanged(ActiveSlotChangeEventArgs args)
         {
-            if (PlacementRotation.Local != 0)
+            if (PlacementRotation.Local != 0 || PlacementRotation.LocalPending)
             {
                 PlacementRotation.Local = 0;
+                PlacementRotation.LocalPending = false;
                 ClientChannel?.SendPacket(new PlacementRotationPacket { Deg = 0 });
             }
 
@@ -484,6 +559,12 @@ namespace UniversalDisplayLib
                 PlacementHeight.Local = 0f;
                 ClientChannel?.SendPacket(new PlacementHeightPacket { Voxels = 0f });
             }
+
+            if (PlacementScale.Local != 1f)
+            {
+                PlacementScale.Local = 1f;
+                ClientChannel?.SendPacket(new PlacementScalePacket { Scale = 1f });
+            }
         }
 
         /// <summary>
@@ -493,14 +574,14 @@ namespace UniversalDisplayLib
         private static void ApplyConfigReload(ICoreAPI api, string savedBy)
         {
             var c0 = UniversalDisplayLibConfig.Current;
-            var was = (c0.HeightLimitVoxels, c0.PrecisePlacement, c0.AllowItemOverlap, c0.RoomSafeOpening);
+            var was = (c0.HeightLimitVoxels, c0.PrecisePlacement, c0.AllowItemOverlap, c0.RoomSafeOpening, c0.SizeMinPercent, c0.SizeMaxPercent);
 
             if (!UniversalDisplayLibConfig.Reload(api)) return;
 
             if (api.Side == EnumAppSide.Server)
             {
                 var c1 = UniversalDisplayLibConfig.Current;
-                var now = (c1.HeightLimitVoxels, c1.PrecisePlacement, c1.AllowItemOverlap, c1.RoomSafeOpening);
+                var now = (c1.HeightLimitVoxels, c1.PrecisePlacement, c1.AllowItemOverlap, c1.RoomSafeOpening, c1.SizeMinPercent, c1.SizeMaxPercent);
 
                 // NOTHING TO SAY IF NO SERVER RULE CHANGED. The managers forward a client's
                 // save to the server whenever an ADMIN saves - their own client settings
@@ -532,9 +613,9 @@ namespace UniversalDisplayLib
 
             var c = UniversalDisplayLibConfig.Current;
             api.Logger.Notification(
-                "[UniversalDisplayLib] {0}: settings reloaded{1}. Server rules now: HeightLimitVoxels={2} PrecisePlacement={3} AllowItemOverlap={4} RoomSafeOpening={5}",
+                "[UniversalDisplayLib] {0}: settings reloaded{1}. Server rules now: HeightLimitVoxels={2} PrecisePlacement={3} AllowItemOverlap={4} RoomSafeOpening={5} Size={6}-{7}%",
                 api.Side, savedBy == null ? "" : " (saved by " + savedBy + ")",
-                c.HeightLimitVoxels, c.PrecisePlacement, c.AllowItemOverlap, c.RoomSafeOpening);
+                c.HeightLimitVoxels, c.PrecisePlacement, c.AllowItemOverlap, c.RoomSafeOpening, c.SizeMinPercent, c.SizeMaxPercent);
         }
 
         public override void Start(ICoreAPI api)
@@ -542,6 +623,10 @@ namespace UniversalDisplayLib
             base.Start(api);
 
             UniversalDisplayLibConfig.Load(api);
+
+            // a display size on an item is not part of what the item IS, so stacks compare without it (see ItemScale)
+            if (System.Array.IndexOf(GlobalConstants.IgnoredStackAttributes, ItemScale.AttributeKey) < 0)
+                GlobalConstants.IgnoredStackAttributes = GlobalConstants.IgnoredStackAttributes.Append(ItemScale.AttributeKey).ToArray();
 
             // The materials come from the Materials Kit (src/Materials, installed by ../Tools/Materials Kit/install-kit.py - do
             // not edit those files, rerun the script). Its item models leave out our display-surface markers too.
@@ -640,6 +725,8 @@ namespace UniversalDisplayLib
             AllowItemOverlap = UniversalDisplayLibConfig.Current?.AllowItemOverlap ?? false,
             RoomSafeOpening = UniversalDisplayLibConfig.Current?.RoomSafeOpening ?? false,
             PrecisePlacement = UniversalDisplayLibConfig.Current?.PrecisePlacement ?? true,
+            SizeMinPercent = Math.Clamp(UniversalDisplayLibConfig.Current?.SizeMinPercent ?? 25, 10, 100),
+            SizeMaxPercent = Math.Clamp(UniversalDisplayLibConfig.Current?.SizeMaxPercent ?? 200, 100, 400),
         };
 
         public const string ChannelName = "universaldisplaylib-linkedopen";
@@ -650,8 +737,10 @@ namespace UniversalDisplayLib
             // ForgetAll for what carries over if this is skipped.
             PlacementRotation.ForgetAll();
             PlacementHeight.ForgetAll();
+            PlacementScale.ForgetAll();
             MeasuredItemSizes.ForgetAll();
             WornShapeMesh.ForgetAll();
+            BlockBehaviorDisplaySurfaces.ForgetDisplayData();
 
             // TELL EACH PLAYER THE LIMIT AS THEY ARRIVE. The step is theirs; the limit is
             // ours, because the height is stored on the block and everyone sees it. Without
@@ -667,9 +756,22 @@ namespace UniversalDisplayLib
                 .RegisterMessageType<AdjustStoredItemHeightPacket>()
                 .RegisterMessageType<PlacementLimitsPacket>()
                 .RegisterMessageType<MeasuredItemSizePacket>()
+                .RegisterMessageType<PlacementScalePacket>()
+                .RegisterMessageType<AdjustStoredItemScalePacket>()
                 .SetMessageHandler<MeasuredItemSizePacket>(MeasuredItemSizes.Receive)
+                .SetMessageHandler<PlacementScalePacket>((player, packet) =>
+                    PlacementScale.Remember(player?.PlayerUID, packet?.Scale ?? 1f))
+                .SetMessageHandler<AdjustStoredItemScalePacket>((player, packet) =>
+                {
+                    if (packet?.SlotId == null) return;
+                    var pos = new BlockPos(packet.X, packet.Y, packet.Z);
+                    // range check, as the height and rotate packets: a client-supplied position
+                    if (player?.Entity == null || player.Entity.Pos.AsBlockPos.DistanceTo(pos) > 12) return;
+                    if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
+                        be.AdjustStoredItemScale(packet.SlotId, packet.Down, player);
+                })
                 .SetMessageHandler<PlacementRotationPacket>((player, packet) =>
-                    PlacementRotation.Remember(player?.PlayerUID, packet?.Deg ?? 0))
+                    PlacementRotation.Remember(player?.PlayerUID, packet?.Deg ?? 0, packet?.Pending == true || (packet?.Deg ?? 0) != 0))
                 .SetMessageHandler<PlacementHeightPacket>((player, packet) =>
                     PlacementHeight.Remember(player?.PlayerUID, packet?.Voxels ?? 0f))
                 .SetMessageHandler<AdjustStoredItemHeightPacket>((player, packet) =>
@@ -686,9 +788,9 @@ namespace UniversalDisplayLib
                         return;
                     }
 
-                    if (api.World.BlockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be)
+                    if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
                     {
-                        be.AdjustStoredItemHeight(packet.SlotId, packet.Down, packet.StepVoxels);
+                        be.AdjustStoredItemHeight(packet.SlotId, packet.Down, packet.StepVoxels, player);
                     }
                 })
                 .SetMessageHandler<RotateStoredItemPacket>((player, packet) =>
@@ -705,7 +807,7 @@ namespace UniversalDisplayLib
                         return;
                     }
 
-                    if (api.World.BlockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be)
+                    if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
                     {
                         be.RotateStoredItem(packet.SlotId, player, packet.Reverse, packet.StepDeg);
                     }
@@ -714,6 +816,12 @@ namespace UniversalDisplayLib
 
         public override void StartClientSide(ICoreClientAPI api)
         {
+            // The wheel's two modifiers, remappable in Controls (lib 1.3.1). No handler: they only matter while the
+            // wheel turns (OnMouseWheel -> HotKeyHeld), and pressing one alone must still sprint / sneak as normal.
+            api.Input.RegisterHotKey(TurnHotKey, Lang.Get("universaldisplaylib:hotkey-turn"), GlKeys.ControlLeft, HotkeyType.CharacterControls);
+            api.Input.RegisterHotKey(HeightHotKey, Lang.Get("universaldisplaylib:hotkey-height"), GlKeys.ShiftLeft, HotkeyType.CharacterControls);
+            api.Input.RegisterHotKey(ScaleHotKey, Lang.Get("universaldisplaylib:hotkey-scale"), GlKeys.AltLeft, HotkeyType.CharacterControls);
+
             // Client-only: guards an IndexOutOfRange crash inside vanilla's own
             // BlockBehaviorDisplay.placingItemsPreview, which our three-surface blocks
             // make reachable. See VanillaDisplayBoundsPatch for the mechanism.
@@ -768,11 +876,15 @@ namespace UniversalDisplayLib
             // otherwise carry over into a new world, and the outline override would still be
             // on with nothing having toggled it.
             PlacementRotation.Local = 0;
+                PlacementRotation.LocalPending = false;
             PlacementHeight.Local = 0f;
 
             // A static outlives a world, and the next server is not necessarily this one.
             // Null means "not told yet", which falls back to our own config.
             PlacementHeight.ServerLimit = null;
+            PlacementScale.ServerMinPercent = null;
+            PlacementScale.ServerMaxPercent = null;
+            PlacementScale.Local = 1f;
             ServerRules.Forget();
             BlockBehaviorDisplaySurfaces.ForceFootprintBox = false;
             BEUniversalDisplay.LiveClientInstances.Clear();
@@ -784,6 +896,7 @@ namespace UniversalDisplayLib
             // audit. The overrides are session-only by design; this is where the session ends.
             TuningFiles.SizesDirty = false;
             BlockBehaviorDisplaySurfaces.SizeOverrides.Clear();
+            BlockBehaviorDisplaySurfaces.ForgetDisplayData();
             MeasuredItemSizes.ForgetAll();
             WornShapeMesh.ForgetAll();
 
@@ -830,6 +943,9 @@ namespace UniversalDisplayLib
                 .RegisterMessageType<PlacementLimitsPacket>()
                 // measured item sizes go to the server (MeasuredItemSizes); registered on both sides like every type
                 .RegisterMessageType<MeasuredItemSizePacket>()
+                // resize (lib 1.4.0) - last, in the same order as the server's list
+                .RegisterMessageType<PlacementScalePacket>()
+                .RegisterMessageType<AdjustStoredItemScalePacket>()
                 // The server's rule, not ours - see PlacementHeight.Limit.
                 .SetMessageHandler<PlacementLimitsPacket>(packet =>
                 {
@@ -839,6 +955,10 @@ namespace UniversalDisplayLib
                     ServerRules.AllowOverlap = packet.AllowItemOverlap;
                     ServerRules.RoomSafe = packet.RoomSafeOpening;
                     ServerRules.Precise = packet.PrecisePlacement;
+                    // 0 = an older lib that does not send them: keep this side's own
+                    PlacementScale.ServerMinPercent = packet.SizeMinPercent > 0 ? Math.Clamp(packet.SizeMinPercent, 10, 100) : null;
+                    PlacementScale.ServerMaxPercent = packet.SizeMaxPercent > 0 ? Math.Clamp(packet.SizeMaxPercent, 100, 400) : null;
+                    PlacementScale.Local = PlacementScale.Clamp(PlacementScale.Local);
 
                     // The grid was built at block load, before we knew any of this, so the
                     // value alone changes nothing - it has to be rebuilt. Returns -1 and does
@@ -853,9 +973,16 @@ namespace UniversalDisplayLib
                 })
                 // The server owns the value after a placement and pushes it back
                 .SetMessageHandler<PlacementRotationPacket>(packet =>
-                    PlacementRotation.Local = PlacementRotation.Normalise(packet?.Deg ?? 0))
+                {
+                    if (packet?.PlacedSlot != null)
+                        PlacementGhostRenderer.PlacementCommitted(new BlockPos(packet.X, packet.Y, packet.Z, packet.Dimension), packet.PlacedSlot);
+                    PlacementRotation.Local = PlacementRotation.Normalise(packet?.Deg ?? 0);
+                    PlacementRotation.LocalPending = packet?.Pending == true;
+                })
                 .SetMessageHandler<PlacementHeightPacket>(packet =>
-                    PlacementHeight.Local = PlacementHeight.Clamp(packet?.Voxels ?? 0f));
+                    PlacementHeight.Local = PlacementHeight.Clamp(packet?.Voxels ?? 0f))
+                .SetMessageHandler<PlacementScalePacket>(packet =>
+                    PlacementScale.Local = PlacementScale.Clamp(packet?.Scale ?? 1f));
         }
 
         /// <summary>
@@ -934,12 +1061,13 @@ namespace UniversalDisplayLib
         /// is the same reasoning that made this a packet rather than something each side
         /// works out for itself.
         /// </summary>
-        private static void RotatePlacement(ICoreClientAPI api, int direction)
+        private static void RotatePlacement(ICoreClientAPI api, int direction, float seed = 0)
         {
             PlacementRotation.Local = PlacementRotation.Normalise(
-                PlacementRotation.Local + direction * PlacementRotation.Step);
+                (PlacementRotation.LocalPending ? PlacementRotation.Local : (int)Math.Round(seed)) + direction * PlacementRotation.Step);
+            PlacementRotation.LocalPending = true;
 
-            ClientChannel?.SendPacket(new PlacementRotationPacket { Deg = PlacementRotation.Local });
+            ClientChannel?.SendPacket(new PlacementRotationPacket { Deg = PlacementRotation.Local, Pending = true });
 
             // Say it in words ONLY when the ghost is switched off, because then nothing else
             // shows the angle and the gesture is completely invisible. This lived on the R
@@ -958,20 +1086,65 @@ namespace UniversalDisplayLib
         /// sprint+wheel everywhere in the world, so this answers NO for anything that is
         /// not one of our surfaces.
         /// </summary>
+        /// <summary>Held item + an aim another mod would start a display block on (PlacementGhostRenderer.BareGhostSources).</summary>
+        private static bool AimsAtBareGhost(ICoreClientAPI api, BlockSelection sel, out float angle)
+        {
+            angle = 0;
+            ItemSlot held = api.World.Player?.Entity?.RightHandItemSlot;
+            if (held == null || held.Empty) return false;
+            foreach (var source in PlacementGhostRenderer.BareGhostSources)
+                if (source(api, held, sel, out var target, out var onTarget)
+                    && WheelTargetsHeldPreview(target, onTarget, held, out angle)) return true;
+            return false;
+        }
+
+        internal static bool WheelTargetsHeldPreview(BEUniversalDisplay target, BlockSelection selection, ItemSlot held, out float angle)
+        {
+            angle = 0;
+            if (!(held is { Empty: false } && target?.SurfaceBehavior is { } behavior
+                && behavior.TryGetGhostOn(target, selection, held, out var loc, out _, out angle, out _))) return false;
+            // The ghost's angle includes the surface's own facing - pad previews always did, stack previews too since
+            // lib 1.3.1 (the stacked ghost on a corner shelf's side) - while the pending turn is kept without it. Taking
+            // it off only for pads made the first Sprint + wheel notch on a stacked ghost jump by the facing (90 on a
+            // corner shelf's side - Calm, 2026-10-19).
+            angle -= target.SurfaceFacingDeg(behavior.GetSurface(loc.SurfaceIndex));
+            return true;
+        }
+
         private static bool TryWheelRotate(ICoreClientAPI api, bool forward)
         {
+            if (BEUniversalDisplay.ChisellingToolsHeld(api.World.Player?.InventoryManager?.ActiveHotbarSlot, api.World.Player)) return false;
             // as the window owning the aimed box sees it - an item stacked above its shelf is aimed at through a filler
             BlockSelection sel = BEUniversalDisplay.WindowSelection(api.World.BlockAccessor, api.World.Player?.CurrentBlockSelection);
             if (sel == null) return false;
 
             Block block = api.World.BlockAccessor.GetBlock(sel.Position);
-            if (block?.GetBehavior<BlockBehaviorDisplaySurfaces>() == null) return false;
+            if (block?.GetBehavior<BlockBehaviorDisplaySurfaces>() == null
+                && BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position)?.SurfaceBehavior == null)
+            {
+                // bare ground a pile would start on (a ghost shows there): turn what is about to be placed
+                if (!AimsAtBareGhost(api, sel, out float seed)) return false;
+                RotatePlacement(api, forward ? 1 : -1, seed);
+                return true;
+            }
 
             DisplaySlotId loc = DisplaySlotId.Decode(sel.SelectionBoxId);
-            if (loc == null) return false;   // frame or pane box — leave the wheel alone
+            if (loc == null)
+            {
+                if (!AimsAtBareGhost(api, sel, out float seed)) return false;
+                RotatePlacement(api, forward ? 1 : -1, seed);
+                return true;
+            }
 
             if (loc.IsPlacedItem)
             {
+                var targetDisplay = BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position);
+                var pendingHeld = api.World.Player?.InventoryManager?.ActiveHotbarSlot;
+                if (WheelTargetsHeldPreview(targetDisplay, sel, pendingHeld, out float angle))
+                {
+                    RotatePlacement(api, forward ? 1 : -1, angle);
+                    return true;
+                }
                 // A locked chiselled design does not turn. Said here rather than server-side
                 // because only the client can raise an ingame error; the REFUSAL still lives
                 // in BEUniversalDisplay.RotateStoredItem, which is what a hand-made packet
@@ -980,7 +1153,7 @@ namespace UniversalDisplayLib
                 // Returns TRUE: the notch was ours and was handled, so the wheel must still
                 // be consumed or it falls through to the hotbar and the player's held slot
                 // changes every time they try.
-                if (api.World.BlockAccessor.GetBlockEntity(sel.Position) is BEUniversalDisplay be
+                if (BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position) is { } be
                     && be.IsSlotLocked(loc.Encoded))
                 {
                     api.TriggerIngameError(api, "displaylocked",
@@ -1010,7 +1183,9 @@ namespace UniversalDisplayLib
             ItemSlot held = api.World.Player?.Entity?.RightHandItemSlot;
             if (held == null || held.Empty) return false;
 
-            RotatePlacement(api, forward ? 1 : -1);
+            var padDisplay = BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position);
+            if (!WheelTargetsHeldPreview(padDisplay, sel, held, out float padAngle)) return false;
+            RotatePlacement(api, forward ? 1 : -1, padAngle);
             return true;
         }
 
@@ -1043,21 +1218,41 @@ namespace UniversalDisplayLib
         /// </summary>
         private static bool TryWheelHeight(ICoreClientAPI api, bool up)
         {
+            if (BEUniversalDisplay.ChisellingToolsHeld(api.World.Player?.InventoryManager?.ActiveHotbarSlot, api.World.Player)) return false;
             // as the window owning the aimed box sees it - an item stacked above its shelf is aimed at through a filler
             BlockSelection sel = BEUniversalDisplay.WindowSelection(api.World.BlockAccessor, api.World.Player?.CurrentBlockSelection);
             if (sel == null) return false;
 
             Block block = api.World.BlockAccessor.GetBlock(sel.Position);
-            if (block?.GetBehavior<BlockBehaviorDisplaySurfaces>() == null) return false;
+            if (block?.GetBehavior<BlockBehaviorDisplaySurfaces>() == null
+                && BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position)?.SurfaceBehavior == null)
+            {
+                // bare ground a pile would start on: raise / lower what is about to be placed
+                if (!AimsAtBareGhost(api, sel, out _)) return false;
+                AdjustPlacementHeight(api, up ? 1 : -1);
+                return true;
+            }
 
             DisplaySlotId loc = DisplaySlotId.Decode(sel.SelectionBoxId);
-            if (loc == null) return false;   // frame or pane box — leave the wheel alone
+            if (loc == null)
+            {
+                if (!AimsAtBareGhost(api, sel, out _)) return false;
+                AdjustPlacementHeight(api, up ? 1 : -1);
+                return true;
+            }
 
             if (loc.IsPlacedItem)
             {
+                var targetDisplay = BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position);
+                var pendingHeld = api.World.Player?.InventoryManager?.ActiveHotbarSlot;
+                if (WheelTargetsHeldPreview(targetDisplay, sel, pendingHeld, out _))
+                {
+                    AdjustPlacementHeight(api, up ? 1 : -1);
+                    return true;
+                }
                 // The nudge half of the lock message — see TryWheelRotate for why it is said
                 // on this side and enforced on the other.
-                if (api.World.BlockAccessor.GetBlockEntity(sel.Position) is BEUniversalDisplay be
+                if (BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position) is { } be
                     && be.IsSlotLocked(loc.Encoded))
                 {
                     api.TriggerIngameError(api, "displaylocked",
@@ -1086,6 +1281,64 @@ namespace UniversalDisplayLib
             if (held == null || held.Empty) return false;
 
             AdjustPlacementHeight(api, up ? 1 : -1);
+            return true;
+        }
+
+        /// <summary>Steps the pending size (lib 1.4.0) and tells the server, as AdjustPlacementHeight does.</summary>
+        private static void AdjustPlacementScale(ICoreClientAPI api, int direction)
+        {
+            PlacementScale.Local = PlacementScale.Clamp(PlacementScale.Local + direction * PlacementScale.Step);
+            ClientChannel?.SendPacket(new PlacementScalePacket { Scale = PlacementScale.Local });
+            api?.TriggerIngameError(api, "windowdisplayscale",
+                Lang.Get("universaldisplaylib:placement-scale", (int)Math.Round(PlacementScale.Local * 100f)));
+        }
+
+        /// <summary>
+        /// One wheel notch of size (lib 1.4.0) - the gate and the split of <see cref="TryWheelHeight"/>: an item
+        /// already there is sized by packet (server state), a pad or bare ground sizes what is about to be placed.
+        /// </summary>
+        private static bool TryWheelScale(ICoreClientAPI api, bool up)
+        {
+            if (BEUniversalDisplay.ChisellingToolsHeld(api.World.Player?.InventoryManager?.ActiveHotbarSlot, api.World.Player)) return false;
+            BlockSelection sel = BEUniversalDisplay.WindowSelection(api.World.BlockAccessor, api.World.Player?.CurrentBlockSelection);
+            if (sel == null) return false;
+
+            Block block = api.World.BlockAccessor.GetBlock(sel.Position);
+            DisplaySlotId loc = DisplaySlotId.Decode(sel.SelectionBoxId);
+            if ((block?.GetBehavior<BlockBehaviorDisplaySurfaces>() == null
+                 && BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position)?.SurfaceBehavior == null) || loc == null)
+            {
+                if (!AimsAtBareGhost(api, sel, out _)) return false;
+                AdjustPlacementScale(api, up ? 1 : -1);
+                return true;
+            }
+
+            if (loc.IsPlacedItem)
+            {
+                var targetDisplay = BEUniversalDisplay.At(api.World.BlockAccessor, sel.Position);
+                var pendingHeld = api.World.Player?.InventoryManager?.ActiveHotbarSlot;
+                if (WheelTargetsHeldPreview(targetDisplay, sel, pendingHeld, out _))
+                {
+                    AdjustPlacementScale(api, up ? 1 : -1);
+                    return true;
+                }
+                if (targetDisplay != null && targetDisplay.IsSlotLocked(loc.Encoded))
+                {
+                    api.TriggerIngameError(api, "displaylocked", Lang.Get("universaldisplaylib:item-locked"));
+                    return true;
+                }
+                ClientChannel?.SendPacket(new AdjustStoredItemScalePacket
+                {
+                    X = sel.Position.X, Y = sel.Position.Y, Z = sel.Position.Z,
+                    SlotId = loc.Encoded,
+                    Down = !up,
+                });
+                return true;
+            }
+
+            ItemSlot held = api.World.Player?.Entity?.RightHandItemSlot;
+            if (held == null || held.Empty) return false;
+            AdjustPlacementScale(api, up ? 1 : -1);
             return true;
         }
 

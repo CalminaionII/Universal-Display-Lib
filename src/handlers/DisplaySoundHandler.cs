@@ -192,25 +192,23 @@ namespace UniversalDisplayLib
 
         private void TickSharedRainSound()
         {
-            // Volume 0 is the off switch — the separate EnableRainSound flag said the
-            // same thing twice, so it went with the config cleanup.
-            bool shouldPlay = UniversalDisplayLibConfig.Current.RainSoundVolume > 0
-                && DeclaredSound(_be?.Block, "rain") != null
-                && IsRainedOn(_be.Pos)
-                && PlayerNearThisBlock((float)UniversalDisplayLibConfig.Current.RainSoundRange);
-
             if (SharedSounds.TryGetValue("rain", out var existing))
             {
                 bool soundAlive = existing.sound != null && !existing.sound.IsDisposed && existing.sound.IsPlaying;
 
                 if (soundAlive)
                 {
+                    // ONLY THE OWNER KEEPS IT GOING (code check 2026-10-22): every loaded display, shelves included, used to
+                    // move and re-level the one rain sound 4 times a second, each reading the climate. Another window takes
+                    // over once the owner lets it go.
+                    if (existing.owner != _be.Pos) return;
+
                     existing.sound.SetPosition(_capi.World.Player.Entity.Pos.XYZFloat);
 
                     float target = ComputeTargetRainVolume(existing.owner);
                     existing.sound.SetVolume(GameMath.Lerp(existing.sound.Params.Volume, target, SmoothSpeed));
 
-                    if (!shouldPlay && existing.owner == _be.Pos)
+                    if (!ShouldPlayRain())
                     {
                         existing.sound.FadeOutAndStop(FadeSpeed);
                         SharedSounds.Remove("rain");
@@ -222,7 +220,7 @@ namespace UniversalDisplayLib
                 SharedSounds.Remove("rain");
             }
 
-            if (!shouldPlay) return;
+            if (!ShouldPlayRain()) return;
 
             ILoadedSound newSound = _capi.World.LoadSound(new SoundParams()
             {
@@ -240,6 +238,15 @@ namespace UniversalDisplayLib
                 SharedSounds["rain"] = (_be.Pos, newSound);
             }
         }
+
+        // Volume 0 is the off switch — the separate EnableRainSound flag said the
+        // same thing twice, so it went with the config cleanup. Cheapest checks first:
+        // most displays name no rain sound and stop at the second.
+        private bool ShouldPlayRain()
+            => UniversalDisplayLibConfig.Current.RainSoundVolume > 0
+               && DeclaredSound(_be?.Block, "rain") != null
+               && PlayerNearThisBlock((float)UniversalDisplayLibConfig.Current.RainSoundRange)
+               && IsRainedOn(_be.Pos);
 
         private bool PlayerNearThisBlock(float range)
         {

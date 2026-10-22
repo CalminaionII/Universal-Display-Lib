@@ -107,6 +107,7 @@ namespace UniversalDisplayLib
             if (guest != null)
             {
                 if (world.Side != EnumAppSide.Server) return;
+                if (BEUniversalDisplay.At(world.BlockAccessor, guest.Position) is { IsEmbedded: true }) return;
                 if (byPlayer != null && world.Claims.TestAccess(byPlayer, guest.Position, EnumBlockAccessFlags.BuildOrBreak) != EnumWorldAccessResponse.Granted) return;
                 world.BlockAccessor.BreakBlock(guest.Position, byPlayer, dropQuantityMultiplier);
                 return;
@@ -137,12 +138,32 @@ namespace UniversalDisplayLib
         {
             base.OnNeighbourBlockChange(world, pos, neibpos);
 
+            // needsSupport (the ground pile): the block below stops holding it up -> it breaks and drops what it held,
+            // the same test the game's own ground storage makes before it is placed.
+            // With followSupport anything solid enough to have a collision box holds it (a slab, a chiselled top).
+            if (world.Side == EnumAppSide.Server && Attributes?["needsSupport"].AsBool(false) == true
+                && neibpos.X == pos.X && neibpos.Z == pos.Z && neibpos.Y == pos.Y - 1
+                && !HoldsUp(world, neibpos))
+            {
+                world.BlockAccessor.BreakBlock(pos, null);
+                return;
+            }
+
             if (neibpos.X == pos.X && neibpos.Z == pos.Z && neibpos.Y == pos.Y - 1
                 && world.BlockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be)
             {
                 be.InvalidateBoxes();
                 be.MarkMeshesDirty();
             }
+        }
+
+        /// <summary>Does the block at <paramref name="below"/> hold this block up (needsSupport)?</summary>
+        bool HoldsUp(IWorldAccessor world, BlockPos below)
+        {
+            Block b = world.BlockAccessor.GetBlock(below);
+            if (Attributes?["followSupport"].AsBool(false) == true)
+                return b?.GetCollisionBoxes(world.BlockAccessor, below)?.Length > 0;
+            return b != null && b.CanAttachBlockAt(world.BlockAccessor, this, below, BlockFacing.UP);
         }
 
         /// <summary>Light comes from whatever is stored on the sills.</summary>

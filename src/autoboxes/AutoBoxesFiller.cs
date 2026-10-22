@@ -34,7 +34,18 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         if (blockSel.SelectionBoxIndex < 0 || blockSel.SelectionBoxIndex >= boxes.Length) return;
         Cuboidf hovered = boxes[blockSel.SelectionBoxIndex];
         if (BEUniversalDisplay.IsHiddenPartBox((hovered as CuboidfWithId)?.Id)) return;
-        if (DisplaySlotId.Decode((hovered as CuboidfWithId)?.Id) is { IsPlacedItem: true } && !BlockBehaviorDisplaySurfaces.ShouldDrawPlacedItemBox()) return;
+        // Both pads and placed items need the owner's complete preview. An upper
+        // filler used to forward only pads, losing the flower preview on a pot.
+        // ONLY those (lib 1.3.1, Calm 2026-10-20: "no box when open but is when closed" on every External Shutter): the
+        // owner draws by looking the id up among its OWN block's boxes, and an open leaf lying wholly in this space is not
+        // there - so it drew nothing and the leaf had no outline. Leaves and frame parts are drawn here, as before 1.3.0.
+        DisplaySlotId slot = DisplaySlotId.Decode((hovered as CuboidfWithId)?.Id);
+        if (slot != null)
+        {
+            BlockSelection aimedOwner = ToOwner(capi.World.BlockAccessor, blockSel);
+            if (BlockBehaviorDisplaySurfaces.RenderOwnerSelection(capi.World, blockSel, aimedOwner, renderBoxHandler)) return;
+        }
+        if (slot is { IsPlacedItem: true } && !BlockBehaviorDisplaySurfaces.ShouldDrawPlacedItemBox()) return;
         renderBoxHandler(hovered, 1.6f * capi.Settings.Float["wireframethickness"], GetSelectionColor(capi, blockSel.Position));
     }
 
@@ -51,7 +62,7 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
 
     // UDL: the owners sharing this space after the owner (IAutoBoxesOwner only), in the order their boxes are listed
     static IEnumerable<IAutoBoxesOwner> Sharing(IBlockAccessor ba, BEAutoBoxesFiller be) =>
-        be.Sharers.Select(s => ba.GetBlockEntity(s) as IAutoBoxesOwner).Where(o => o != null);
+        be.Sharers.Select(s => AutoBoxes.OwnerAt(ba, s)).Where(o => o != null);
 
     // UDL: whose box is aimed at - by its index in GetSelectionBoxes (the owner's boxes first, then each sharer's); the owner when unsure
     static BlockPos AimedOwner(IBlockAccessor ba, BlockPos pos, int boxIndex)
@@ -62,7 +73,7 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         int n = boxIndex;
         foreach (var who in be.AllOwners())
         {
-            if (ba.GetBlockEntity(who) is not IAutoBoxesOwner o) continue;
+            if (AutoBoxes.OwnerAt(ba, who) is not { } o) continue;
             int count = o.AutoBoxesAt(pos).Length;
             if (n < count) return who;
             n -= count;
@@ -75,7 +86,7 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         var be = Be(blockAccessor, pos);
         var owner = OwnerOf(blockAccessor, pos);
         if (owner == null) return [];
-        if (blockAccessor.GetBlockEntity(owner) is IAutoBoxesOwner o)
+        if (AutoBoxes.OwnerAt(blockAccessor, owner) is { } o)
             return be.Sharers.Count == 0 ? o.AutoBoxesAt(pos) : o.AutoBoxesAt(pos).Concat(Sharing(blockAccessor, be).SelectMany(s => s.AutoBoxesAt(pos))).ToArray();
         // an owner that is not ours: the box this filler carries, seen from here
         return be.Carried == null ? [] : [AutoBoxes.Whole(be.Carried, (pos.X - owner.X, pos.Y - owner.Y, pos.Z - owner.Z))];
@@ -87,7 +98,7 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         var be = Be(blockAccessor, pos);
         var owner = be?.Owner;
         if (owner == null) return [];
-        if (blockAccessor.GetBlockEntity(owner) is IAutoBoxesOwner o)
+        if (AutoBoxes.OwnerAt(blockAccessor, owner) is { } o)
             return be.Sharers.Count == 0 ? o.AutoCollisionAt(pos) ?? [] : (o.AutoCollisionAt(pos) ?? []).Concat(Sharing(blockAccessor, be).SelectMany(s => s.AutoCollisionAt(pos) ?? [])).ToArray();
         if (!be.Solid || be.Carried == null || !AutoBoxes.Valid(blockAccessor, owner)) return [];
         return be.CollisionPiece();
@@ -132,6 +143,8 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         BlockSelection aimed = ToOwner(world.BlockAccessor, blockSel);
         if (BEUniversalDisplay.IsHiddenPartBox(aimed?.SelectionBoxId)) return true;
         var owner = AimedOwner(world.BlockAccessor, blockSel.Position, blockSel.SelectionBoxIndex);
+        if (owner != null && BEUniversalDisplay.At(world.BlockAccessor, owner) is { IsEmbedded: true } embedded)
+            return embedded.OnBlockInteractStart(world, byPlayer, aimed);
         return owner != null && world.BlockAccessor.GetBlock(owner).OnBlockInteractStart(world, byPlayer, Forwarded(blockSel, owner));
     }
 
@@ -158,6 +171,8 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
             world.BlockAccessor.SetBlock(0, pos);
             return;
         }
+        // Embedded item targets are taken with right-click, just as in their host.
+        if (BEUniversalDisplay.At(world.BlockAccessor, owner) is { IsEmbedded: true }) return;
         if (byPlayer != null && world.Claims.TestAccess(byPlayer, owner, EnumBlockAccessFlags.BuildOrBreak) != EnumWorldAccessResponse.Granted) return;
         world.BlockAccessor.BreakBlock(owner, byPlayer, dropQuantityMultiplier);
     }
@@ -299,12 +314,13 @@ public class BEAutoBoxesFiller : BlockEntity
             return;
         }
         var ba = Api.World.BlockAccessor;
-        bool owned = Owner != null && (ba.GetBlockEntity(Owner) is IAutoBoxesOwner o
+        bool owned = Owner != null && (AutoBoxes.OwnerAt(ba, Owner) is { } o
             ? o.AutoBoxesAt(Pos).Length > 0 || o.AutoCollisionAt(Pos).Length > 0   // UDL: solid-only counts too
+              || o is IAutoBoxesPartOfOwner own && own.IsPartOfOwner(Pos)           // UDL: and the owner's own spaces, held even when empty
             : Carried != null && AutoBoxes.Valid(ba, Owner));
         // UDL: sharers that no longer reach here (unloaded ones are waited for) leave; a gone owner hands over to a sharer
         if (Sharers.RemoveAll(s => ba.GetChunkAtBlockPos(s) != null
-                && !(ba.GetBlockEntity(s) is IAutoBoxesOwner so && (so.AutoBoxesAt(Pos).Length > 0 || so.AutoCollisionAt(Pos).Length > 0))) > 0) MarkDirty(true);
+                && !(AutoBoxes.OwnerAt(ba, s) is { } so && (so.AutoBoxesAt(Pos).Length > 0 || so.AutoCollisionAt(Pos).Length > 0))) > 0) MarkDirty(true);
         if (!owned && Sharers.Count > 0)
         {
             SetOwner(TakeFirstSharer());

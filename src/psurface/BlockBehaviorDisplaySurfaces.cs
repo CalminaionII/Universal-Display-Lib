@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.Linq;
 using Newtonsoft.Json.Linq;
@@ -27,7 +28,20 @@ namespace UniversalDisplayLib
         public DisplaySurface[] Surfaces { get; private set; } = Array.Empty<DisplaySurface>();
 
         /// <summary>Grid pads, in block-local coordinates, unrotated.</summary>
-        public CuboidfWithId[] GridBoxes { get; private set; } = Array.Empty<CuboidfWithId>();
+        CuboidfWithId[] gridBoxes = Array.Empty<CuboidfWithId>();
+        Dictionary<int, CuboidfWithId[]> gridsBySurface = new();
+        public CuboidfWithId[] GridBoxes
+        {
+            get => gridBoxes;
+            private set
+            {
+                gridBoxes = value;
+                gridsBySurface = value.GroupBy(box => DisplaySlotId.Decode(box.Id)?.SurfaceIndex ?? -1)
+                    .ToDictionary(group => group.Key, group => group.ToArray());
+            }
+        }
+        public CuboidfWithId[] GridBoxesForSurface(int index)
+            => gridsBySurface.TryGetValue(index, out var boxes) ? boxes : Array.Empty<CuboidfWithId>();
 
         /// <summary>Element names to strip when tesselating, so the markers stay invisible.</summary>
         public string[] SurfaceElementNames { get; private set; } = Array.Empty<string>();
@@ -217,14 +231,16 @@ namespace UniversalDisplayLib
             => GetSurface(surfaceIndex)?.DisplayCategory ?? "shelf";
 
         // ── Box routing ─────────────────────────────────────────────────────
-        // PreventDefault on both: the block entity returns the complete set
-        // (frame + grid + placed items), so the JSON boxes must not be appended.
+        // The block entity owns the complete set (frame + grid + placed items).
+        // PreventSubsequent returns its cached array directly. PreventDefault makes
+        // BlockGeneric copy it through List/ToArray on every query, also defeating
+        // Siding's source-array cache and shifting every placement pad again.
 
         public override Cuboidf[] GetSelectionBoxes(IBlockAccessor blockAccessor, BlockPos pos, ref EnumHandling handled)
         {
             if (blockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be)
             {
-                handled = EnumHandling.PreventDefault;
+                handled = EnumHandling.PreventSubsequent;
                 return be.GetSelectionBoxes();
             }
             return base.GetSelectionBoxes(blockAccessor, pos, ref handled);
@@ -234,7 +250,7 @@ namespace UniversalDisplayLib
         {
             if (blockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be)
             {
-                handled = EnumHandling.PreventDefault;
+                handled = EnumHandling.PreventSubsequent;
                 return be.GetCollisionBoxes();
             }
             return base.GetCollisionBoxes(blockAccessor, pos, ref handled);
@@ -379,7 +395,7 @@ namespace UniversalDisplayLib
                 if (potted != null)
                 {
                     dattr.Size ??= PottedItemSize;
-                    dattr.Shape ??= potted.Shape;
+                    dattr.Shape ??= potted.Shape?.Clone();   // the props are shared now (PottedProps)
                 }
             }
 
@@ -411,6 +427,10 @@ namespace UniversalDisplayLib
             {
                 dattr.Size = tuned;
             }
+
+            // THE PLAYER'S SIZE (lib 1.4.0, the Resize key): last, so every fit and stacking check sees the space the item
+            // really takes. Placed: the size it carries; in hand: its holder's pending size. See ItemScale.
+            dattr.Size = ItemScale.Scaled(dattr.Size, ItemScale.For(slot));
 
             return dattr;
         }
@@ -484,10 +504,61 @@ namespace UniversalDisplayLib
             };
         }
 
+        /// <summary>
+        /// READ ONCE PER ITEM AND CATEGORY (code check 2026-10-22). An item with no IDisplayableProps answers from its own
+        /// attributes alone, which used to be deserialised on every call - per stored item on every box rebuild, and several
+        /// times a frame while placing. Each caller still gets its own copy (FreshCopyOf), as when every call parsed.
+        /// Items with the interface (clutter's typed props) can answer per stack and are still asked every time.
+        /// Cleared on world start and by the transform editor's writes (ForgetDisplayData). Each entry also remembers the
+        /// attributes object it was read from: an item whose attributes are REPLACED later (another mod, or the regression
+        /// suite) is read again rather than answered from the old ones.
+        /// </summary>
+        static readonly ConcurrentDictionary<(CollectibleObject, string), (JsonObject From, DisplayableAttributes Entry)> attributeEntries = new();
+        static readonly ConcurrentDictionary<CollectibleObject, (JsonObject From, PlantContainerProps Props)> pottedProps = new();
+        static readonly ConcurrentDictionary<(CollectibleObject, string), (JsonObject From, bool BySize)> outlineRules = new();
+
+        public static void ForgetDisplayData()
+        {
+            attributeEntries.Clear();
+            pottedProps.Clear();
+            outlineRules.Clear();
+        }
+
+        /// <summary>
+        /// A copy for one caller: its own object (downstream sets the size on it) and its own shape. The TRANSFORM IS
+        /// SHARED - nothing changes one after this point: its defaults were filled in once when the entry was cached
+        /// (the only write anything made, EnsureDefaultValues, is then a no-op), and the tuner clones before editing.
+        /// </summary>
+        private static DisplayableAttributes FreshCopyOf(DisplayableAttributes src)
+        {
+            DisplayableAttributes copy = CopyOf(src);
+            if (copy?.Shape != null) copy.Shape = copy.Shape.Clone();
+            return copy;
+        }
+
         private static DisplayableAttributes ResolveDisplayableAttributes(ItemSlot slot, string displayType)
         {
             CollectibleObject collectible = slot?.Itemstack?.Collectible;
             if (collectible == null) return null;
+
+            IDisplayableProps props = collectible.GetCollectibleInterface<IDisplayableProps>();
+            if (props != null) return ResolveDisplayableAttributes(slot, collectible, displayType, props);
+
+            JsonObject from = collectible.Attributes;
+            if (!attributeEntries.TryGetValue((collectible, displayType), out var known) || !ReferenceEquals(known.From, from))
+            {
+                DisplayableAttributes entry = ResolveDisplayableAttributes(null, collectible, displayType, null);
+                entry?.Transform?.EnsureDefaultValues();   // filled once, here, so every caller can share it (FreshCopyOf)
+                known = (from, entry);
+                attributeEntries[(collectible, displayType)] = known;
+            }
+            return FreshCopyOf(known.Entry);
+        }
+
+        /// <summary><paramref name="props"/> null: the item has no IDisplayableProps, and <paramref name="slot"/> is not read.</summary>
+        private static DisplayableAttributes ResolveDisplayableAttributes(ItemSlot slot, CollectibleObject collectible,
+                                                                          string displayType, IDisplayableProps props)
+        {
 
             // COPIED, NOT RETURNED AS-IS. What comes back here belongs to whoever implements
             // the interface — for clutter it is the live entry inside the behaviour's own
@@ -500,8 +571,7 @@ namespace UniversalDisplayLib
             // Exactly the fault the cached mesh had a few hours earlier, in a different place:
             // anything obtained from an interface someone else implements is not ours to write
             // on unless we copied it first.
-            DisplayableAttributes fromInterface = CopyOf(collectible
-                .GetCollectibleInterface<IDisplayableProps>()?.GetDisplayableProps(slot, displayType));
+            DisplayableAttributes fromInterface = CopyOf(props?.GetDisplayableProps(slot, displayType));
 
             if (fromInterface != null)
             {
@@ -516,9 +586,7 @@ namespace UniversalDisplayLib
                 // `behavior` stays the author's job, as the cookbook says.
                 if (fromInterface.Size == null && displayType != DefaultDisplayCategory)
                 {
-                    DisplayableAttributes shelf = collectible
-                        .GetCollectibleInterface<IDisplayableProps>()
-                        ?.GetDisplayableProps(slot, DefaultDisplayCategory);
+                    DisplayableAttributes shelf = props.GetDisplayableProps(slot, DefaultDisplayCategory);
                     fromInterface.Size = shelf?.Size;
                 }
 
@@ -546,9 +614,7 @@ namespace UniversalDisplayLib
             // and any other mod using the same behaviour, without patching ~100 entries.
             if (displayType != DefaultDisplayCategory)
             {
-                DisplayableAttributes shelfFromInterface = CopyOf(collectible
-                    .GetCollectibleInterface<IDisplayableProps>()
-                    ?.GetDisplayableProps(slot, DefaultDisplayCategory));
+                DisplayableAttributes shelfFromInterface = CopyOf(props?.GetDisplayableProps(slot, DefaultDisplayCategory));
                 if (shelfFromInterface != null) return shelfFromInterface;
             }
 
@@ -683,10 +749,15 @@ namespace UniversalDisplayLib
         /// </summary>
         public static PlantContainerProps PottedProps(CollectibleObject collectible)
         {
-            JsonObject node = collectible?.Attributes?["plantContainable"]["smallContainer"];
-            if (node?.Exists != true) return null;
-
-            return node.AsObject<PlantContainerProps>(null, collectible.Code.Domain);
+            if (collectible == null) return null;
+            // read once per item and attributes object (ForgetDisplayData) - asked on every resolve of a plant with no size
+            // or shape of its own
+            JsonObject from = collectible.Attributes;
+            if (pottedProps.TryGetValue(collectible, out var known) && ReferenceEquals(known.From, from)) return known.Props;
+            JsonObject node = from?["plantContainable"]["smallContainer"];
+            PlantContainerProps props = node?.Exists == true ? node.AsObject<PlantContainerProps>(null, collectible.Code.Domain) : null;
+            pottedProps[collectible] = (from, props);
+            return props;
         }
 
         /// <summary>
@@ -799,7 +870,7 @@ namespace UniversalDisplayLib
         {
             BlockSelection sel = capi == null ? null : BEUniversalDisplay.WindowSelection(capi.World.BlockAccessor, capi.World.Player?.CurrentBlockSelection);
             if (sel != null
-                && capi.World.BlockAccessor.GetBlockEntity(sel.Position) is BEUniversalDisplay window
+                && BEUniversalDisplay.At(capi.World.BlockAccessor, sel.Position) is { } window
                 && DisplaySlotId.Decode(sel.SelectionBoxId) is { IsPlacedItem: true } loc
                 && window.SlotById(loc.Encoded) is { } placed)
             {
@@ -860,15 +931,6 @@ namespace UniversalDisplayLib
             WriteTransform(capi, collectible, ModelTransform.CreateFromTreeAttribute(tree));
         }
 
-        /// <summary>
-        /// Writes a transform onto a collectible's <c>displayable.&lt;category&gt;</c> entry,
-        /// creating whatever part of that structure is missing.
-        ///
-        /// Split out of <see cref="HandleSetTransform"/> so the tuner dialog writes by exactly
-        /// the same route as vanilla's editor. Two ways of storing the same value would be the
-        /// "derived in more than one place" bug again, and this one would show up as an item
-        /// that looks right until something else touches it.
-        /// </summary>
         /// <summary>
         /// Applies a live transform to a TYPE-KEYED item — clutter and anything else using
         /// <c>TypedDisplayableProps</c> — by writing into that behaviour's own map rather than
@@ -933,6 +995,15 @@ namespace UniversalDisplayLib
             return true;
         }
 
+        /// <summary>
+        /// Writes a transform onto a collectible's <c>displayable.&lt;category&gt;</c> entry,
+        /// creating whatever part of that structure is missing.
+        ///
+        /// Split out of <see cref="HandleSetTransform"/> so the tuner dialog writes by exactly
+        /// the same route as vanilla's editor. Two ways of storing the same value would be the
+        /// "derived in more than one place" bug again, and this one would show up as an item
+        /// that looks right until something else touches it.
+        /// </summary>
         public static void WriteTransform(ICoreClientAPI capi, CollectibleObject collectible, ModelTransform tf)
         {
             if (collectible == null || tf == null) return;
@@ -957,6 +1028,7 @@ namespace UniversalDisplayLib
             }
 
             entry["transform"] = JToken.FromObject(tf);
+            ForgetDisplayData();   // the item's attributes just changed under the cache
         }
 
         public static void HandleGetTransform(ICoreClientAPI capi, TreeAttribute tree, ref EnumHandling handling)
@@ -1022,20 +1094,57 @@ namespace UniversalDisplayLib
         // ── Placement preview ───────────────────────────────────────────────
 
         public void RenderSelectionBoxes(BlockSelection blockSel, RenderBoxDelegate renderBoxHandler)
+            => RenderSelectionBoxesOn(null, blockSel, renderBoxHandler);
+
+        public void RenderSelectionBoxesOn(BEUniversalDisplay display, BlockSelection blockSel, RenderBoxDelegate renderBoxHandler)
         {
+            RenderBoxDelegate drawAtHost = renderBoxHandler;
+            // VS SIDING (2026-10-17): a block in a siding wall's space is moved off the panel - the game's boxes come
+            // back moved, our own placing outline is built where it would be without siding. So everything below works
+            // unmoved (the aimed box taken back) and every box drawn is moved on the way out (SidingShift).
+            Vec3f siding = blockSel?.Position == null ? null : SidingShift.At(blockSel.Position, block);
+            if (siding != null)
+            {
+                RenderBoxDelegate drawUnmoved = renderBoxHandler;
+                renderBoxHandler = (box, width, colour) => drawUnmoved(box.OffsetCopy(siding.X, 0f, siding.Z), width, colour);
+            }
             float lineWidth = 1.6f * capi.Settings.Float["wireframethickness"];
 
-            if (capi.World.BlockAccessor.GetBlockEntity(blockSel.Position) is not BEUniversalDisplay be)
+            if ((display ?? BEUniversalDisplay.At(capi.World.BlockAccessor, blockSel.Position)) is not { } be)
             {
                 renderBoxHandler(Cuboidf.Default(), lineWidth, block.GetSelectionColor(capi, blockSel.Position));
                 return;
             }
 
-            Cuboidf[] selectionBoxes = block.GetSelectionBoxes(capi.World.BlockAccessor, blockSel.Position);
-            if (blockSel.SelectionBoxIndex >= selectionBoxes.Length) return;
-
-            Cuboidf hovered = selectionBoxes[blockSel.SelectionBoxIndex];
+            if (be.SuppressPlacement(capi.World.Player?.InventoryManager?.ActiveHotbarSlot)) return;
+            Cuboidf hovered;
             string boxId = blockSel.SelectionBoxId;
+            var explicitTarget = DisplaySlotId.Decode(boxId);
+            if (be.IsEmbedded && explicitTarget is { IsPlacedItem: false })
+            {
+                // Embedded displays expose only item boxes to the host. The real
+                // voxel floor is aimed at; its preview pad is resolved directly.
+                var padSurface = GetSurface(explicitTarget.SurfaceIndex);
+                if (padSurface == null) return;
+                var origin = StackPreviewOrigin(padSurface, explicitTarget);
+                hovered = new Cuboidf(origin.X, origin.Y, origin.Z, origin.X, origin.Y, origin.Z)
+                    .RotatedCopyRad(0f, be.MeshAngleRad, 0f, new Vec3d(.5, 0, .5));
+            }
+            else
+            {
+                Cuboidf[] selectionBoxes = be.IsEmbedded ? be.GetSelectionBoxes()
+                    : block.GetSelectionBoxes(capi.World.BlockAccessor, blockSel.Position);
+                // Forwarded selections carry the owner ID, not an owner-local index.
+                int hoveredIndex = blockSel.SelectionBoxIndex;
+                if (boxId != null)
+                    hoveredIndex = Array.FindIndex(selectionBoxes, b => (b as CuboidfWithId)?.Id == boxId);
+                if (hoveredIndex < 0 || hoveredIndex >= selectionBoxes.Length) return;
+                hovered = selectionBoxes[hoveredIndex];
+                boxId ??= (hovered as CuboidfWithId)?.Id;
+            }
+            if (BEUniversalDisplay.GuestSelection(blockSel, boxId, out var ownerSelection)
+                && RenderOwnerSelection(capi.World, blockSel, ownerSelection, drawAtHost)) return;
+            if (siding != null) hovered = hovered.OffsetCopy(-siding.X, 0f, -siding.Z);
             if (BEUniversalDisplay.IsHiddenPartBox((hovered as CuboidfWithId)?.Id ?? boxId)) return;
             DisplaySlotId loc = DisplaySlotId.Decode(boxId);
 
@@ -1079,13 +1188,14 @@ namespace UniversalDisplayLib
                 // it, and the box is the half that answers "will the next one fit".
                 if (loc is { IsPlacedItem: true } && heldSlot is { Empty: false })
                 {
-                    DrawStackFootprint(be, loc, heldSlot, lineWidth, renderBoxHandler);
+                    DrawStackFootprint(be, loc, heldSlot, lineWidth, renderBoxHandler, blockSel);
                 }
 
                 return;
             }
 
             DisplaySurface surface = GetSurface(loc.SurfaceIndex);
+            if (PlacementGhostRenderer.AwaitingPlacement(be.Pos, loc.Encoded, Environment.TickCount64)) return;
             if (surface == null)
             {
                 renderBoxHandler(hovered, lineWidth, block.GetSelectionColor(capi, blockSel.Position));
@@ -1106,6 +1216,8 @@ namespace UniversalDisplayLib
 
             Vec3f offset = GetCentreOffset(itemSize);
             bool fits = FitsAt(be, surface, loc, itemSize);
+            DisplayableAttributes ghostAttr = GetDisplayableAttributes(heldSlot, surface.DisplayCategory ?? "shelf");
+            fits = fits && ghostAttr != null && be.EmbeddedPlacementFits(loc, ghostAttr, PreviewRotationDeg(be, surface));
 
             // Undo the block rotation, build the preview in local space, rotate back
             Cuboidf local = hovered.RotatedCopyRad(0f, -be.MeshAngleRad, 0f, new Vec3d(0.5, 0.0, 0.5));
@@ -1118,7 +1230,7 @@ namespace UniversalDisplayLib
                 // The pending height nudge, so the box on an empty pad moves with the ghost.
                 // A level-0 placement has no pile under it, so this is the whole offset.
                 .Translate(offset.X / 16f,
-                           PlacementHeight.For(capi, capi.World.Player) / 16f,
+                           be.SlotRestY(loc, surface, ghostAttr, null, PlacementHeight.For(capi, capi.World.Player)) / 16f,
                            offset.Z / 16f)
                 .RotatedCopyRad(0f, be.MeshAngleRad, 0f, new Vec3d(0.5, 0.0, 0.5));
 
@@ -1126,8 +1238,8 @@ namespace UniversalDisplayLib
 
             // The outline is the GHOST's - measured from the mesh it draws (2026-10-06); whether it fits (the colour)
             // still comes from the written footprint, as the placement does.
-            DisplayableAttributes ghostAttr = GetDisplayableAttributes(heldSlot, surface.DisplayCategory ?? "shelf");
-            preview = (ghostAttr == null ? null : be.GhostBox(loc.Encoded, heldSlot, ghostAttr, PreviewRotationDeg(be, surface))) ?? preview;
+            if (!OutlineFromSize(heldSlot, surface.DisplayCategory))
+                preview = (ghostAttr == null ? null : be.GhostBox(loc.Encoded, heldSlot, ghostAttr, PreviewRotationDeg(be, surface))) ?? preview;
 
             renderBoxHandler(preview, lineWidth,
                 fits ? new Vec4f(0f, 0f, 0f, 0.5f) : new Vec4f(0.5f, 0f, 0f, 0.5f));
@@ -1146,7 +1258,7 @@ namespace UniversalDisplayLib
         /// the reason spelled out in TryResolveStackTarget.
         /// </summary>
         private void DrawStackFootprint(BEUniversalDisplay be, DisplaySlotId aimed, ItemSlot heldSlot,
-                                        float lineWidth, RenderBoxDelegate renderBoxHandler)
+                                        float lineWidth, RenderBoxDelegate renderBoxHandler, BlockSelection selection)
         {
             if (!ShouldDrawFootprintBox()) return;
 
@@ -1157,32 +1269,22 @@ namespace UniversalDisplayLib
             DisplayableAttributes dattr = GetDisplayableAttributes(heldSlot, category);
             if (dattr?.Size == null) return;
 
-            if (!be.TryResolveStackTarget(aimed, dattr, out DisplaySlotId target, out float rotDeg, out bool allowed))
+            if (!be.TryResolveStackTargetOn(aimed, dattr, out DisplaySlotId target, out float rotDeg, out bool allowed, selection))
             {
                 return;
             }
 
-            Cuboidf pad = null;
-            string padId = DisplaySlotId.Encode(target.SurfaceIndex, target.X, target.Z, 0f);
-            for (int i = 0; i < GridBoxes.Length; i++)
-            {
-                if (GridBoxes[i].Id == padId) { pad = GridBoxes[i]; break; }
-            }
-            if (pad == null) return;
-
             // + SurfaceFacingDeg, exactly as the pad path's PreviewRotationDeg and TryPut
+            if (PlacementGhostRenderer.AwaitingPlacement(be.Pos, target.Encoded, Environment.TickCount64)) return;
             // both do. Leaving it off was the bug that put the box out of line with the item:
             // the ghost looked right because BuildSlotMatrix adds the facing itself, so the
             // outline was the only thing measuring an unturned footprint.
             Size3f itemSize = RotatedFootprint(dattr.Size, rotDeg + be.SurfaceFacingDeg(surface));
             Vec3f offset = GetCentreOffset(itemSize);
 
-            // NO un-rotation here, unlike the pad path above. That one starts from `hovered`,
-            // which GetSelectionBoxes has ALREADY rotated by MeshAngleRad, so it has to undo
-            // that to reach local space. `GridBoxes` is local and unrotated to begin with —
-            // un-rotating it as well displaced the box on every window whose angle is not
-            // zero, which is nearly all of them.
-            Cuboidf local = pad;
+            // Stored columns survive grid-resolution changes. Build directly from the
+            // slot coordinates, as the ghost does; a matching current pad is unnecessary.
+            Vec3f local = StackPreviewOrigin(surface, target);
 
             // NO 1-voxel lift here, unlike the pad path. That path starts the box at 0.0625 so
             // it clears the surface it is drawn on, which is invisible on an empty sill — but
@@ -1198,7 +1300,7 @@ namespace UniversalDisplayLib
                                           itemSize.Width / 16f,
                                           itemSize.Height / 16f,
                                           itemSize.Length / 16f)
-                .Translate(local.Start)
+                .Translate(local)
                 // SlotRestY with the PENDING nudge, matching TryBuildGhost exactly — the
                 // target slot is empty, so there is nothing stored to read.
                 .Translate(offset.X / 16f,
@@ -1208,7 +1310,8 @@ namespace UniversalDisplayLib
                 .RotatedCopyRad(0f, be.MeshAngleRad, 0f, new Vec3d(0.5, 0.0, 0.5));
 
             // the ghost's own box at the level it would land on (same target and angle the ghost uses)
-            preview = be.GhostBox(target.Encoded, heldSlot, dattr, rotDeg) ?? preview;
+            if (!OutlineFromSize(heldSlot, category))
+                preview = be.GhostBox(target.Encoded, heldSlot, dattr, rotDeg) ?? preview;
 
             renderBoxHandler(preview, lineWidth,
                 allowed ? new Vec4f(0f, 0f, 0f, 0.5f) : new Vec4f(0.5f, 0f, 0f, 0.5f));
@@ -1239,6 +1342,27 @@ namespace UniversalDisplayLib
         /// `PlacementBox`, and this returns to it next session.
         /// </summary>
         public static bool ForceFootprintBox;
+
+        internal static Vec3f StackPreviewOrigin(DisplaySurface surface, DisplaySlotId target)
+            => new Vec3f((surface.VoxelPosition.X + target.X) / 16f,
+                         surface.VoxelPosition.Y / 16f,
+                         (surface.VoxelPosition.Z + target.Z) / 16f);
+
+        // A guest item still belongs to the lower shelf. Delegate the whole rendering
+        // decision (including its pending flower/stack preview), not just its own box.
+        internal static bool RenderOwnerSelection(IWorldAccessor world, BlockSelection host,
+                                                  BlockSelection owner, RenderBoxDelegate draw)
+        {
+            if (owner?.Position == null || host?.Position == null || owner.Position.Equals(host.Position)) return false;
+            var renderer = world.BlockAccessor.GetBlock(owner.Position)
+                .GetInterface<ICustomSelectionBoxRender>(world, owner.Position);
+            if (renderer == null) return false;
+            int dx = owner.Position.X - host.Position.X;
+            int dy = owner.Position.Y - host.Position.Y;
+            int dz = owner.Position.Z - host.Position.Z;
+            renderer.RenderSelectionBoxes(owner, (box, width, colour) => draw(box.OffsetCopy(dx, dy, dz), width, colour));
+            return true;
+        }
 
         /// <summary>
         /// Whether to outline an item already on the sill. Same toggle key overrides it, and
@@ -1281,15 +1405,26 @@ namespace UniversalDisplayLib
         /// </summary>
         public static bool OutlineFromSize(ItemSlot slot, string category)
         {
-            JsonObject displayable = slot?.Itemstack?.Collectible?.Attributes?["displayable"];
-            if (displayable == null || !displayable.Exists) return false;
-            string value = displayable[category ?? DefaultDisplayCategory]["outline"].AsString(null)
-                ?? displayable[DefaultDisplayCategory]["outline"].AsString(null);
-            return string.Equals(value, "size", StringComparison.OrdinalIgnoreCase);
+            CollectibleObject collectible = slot?.Itemstack?.Collectible;
+            if (collectible == null) return false;
+            // read once per item, category and attributes object (outlineRules) - asked on every settings lookup
+            category ??= DefaultDisplayCategory;
+            JsonObject from = collectible.Attributes;
+            if (outlineRules.TryGetValue((collectible, category), out var known) && ReferenceEquals(known.From, from)) return known.BySize;
+            JsonObject displayable = from?["displayable"];
+            bool bySize = false;
+            if (displayable != null && displayable.Exists)
+            {
+                string value = displayable[category]["outline"].AsString(null)
+                    ?? displayable[DefaultDisplayCategory]["outline"].AsString(null);
+                bySize = string.Equals(value, "size", StringComparison.OrdinalIgnoreCase);
+            }
+            outlineRules[(collectible, category)] = (from, bySize);
+            return bySize;
         }
 
         public float PreviewRotationDeg(BEUniversalDisplay be, DisplaySurface surface)
-            => PlacementRotation.For(capi, capi.World.Player) + be.SurfaceFacingDeg(surface);
+            => PlacementRotation.ForSurface(capi, capi.World.Player, be, surface) + be.SurfaceFacingDeg(surface);
 
         /// <summary>
         /// Whether an item of this ALREADY-ROTATED footprint can be placed centred on
@@ -1305,6 +1440,7 @@ namespace UniversalDisplayLib
                                   DisplaySlotId loc, Size3f rotatedSize)
         {
             if (be == null || surface == null || loc == null || rotatedSize == null) return false;
+            rotatedSize = BEUniversalDisplay.FitSize(rotatedSize); // half a voxel of give on every side (lib 1.3.1)
 
             Vec3f offset = GetCentreOffset(rotatedSize);
 
@@ -1313,7 +1449,7 @@ namespace UniversalDisplayLib
                 || loc.Z + offset.Z > surface.Size.Length - rotatedSize.Length) return false;
 
             if (surface.Size.Width < rotatedSize.Width
-                || surface.Size.Height < rotatedSize.Height
+                || (!be.UnboundedStacking && surface.Size.Height < rotatedSize.Height)
                 || surface.Size.Length < rotatedSize.Length) return false;
 
             string hit = be.GetCollidingSlotId(loc, new Cuboidf(rotatedSize));
@@ -1342,10 +1478,29 @@ namespace UniversalDisplayLib
 
             if (blockSel == null || heldSlot == null || heldSlot.Empty) return false;
 
-            be = capi.World.BlockAccessor.GetBlockEntity(blockSel.Position) as BEUniversalDisplay;
+            be = BEUniversalDisplay.At(capi.World.BlockAccessor, blockSel.Position);
             if (be == null) return false;
+            // Native voxel indices are unrelated to the embedded display's pad list.
+            // Bare carved floors go through the ground source with an explicit target.
+            if (be.IsEmbedded && DisplaySlotId.Decode(blockSel.SelectionBoxId) == null) return false;
+            return TryGetGhostOn(be, blockSel, heldSlot, out loc, out dattr, out rotDeg, out fits);
+        }
 
-            loc = DisplaySlotId.Decode(blockSel.SelectionBoxId);
+        /// <summary>
+        /// The ghost against a given block entity - the one in the world, or a phantom (BEUniversalDisplay.Phantom) for
+        /// a block that does not exist yet. <paramref name="blockSel"/> names the aimed pad or item by SelectionBoxId.
+        /// </summary>
+        public bool TryGetGhostOn(BEUniversalDisplay be, BlockSelection blockSel, ItemSlot heldSlot,
+                                  out DisplaySlotId loc, out DisplayableAttributes dattr, out float rotDeg, out bool fits)
+        {
+            loc = null; dattr = null; rotDeg = 0f; fits = false;
+            if (be == null || blockSel == null || heldSlot == null || heldSlot.Empty) return false;
+            if (be.SuppressPlacement(heldSlot)) return false;
+
+            // Ground previews create a pad selection with an explicit ID. Real shelf
+            // selections may carry only an index; resolve those through the same owner
+            // lookup used for clicking so flowers get the same preview on both paths.
+            loc = DisplaySlotId.Decode(be.AimedBoxId(blockSel));
             if (loc == null) return false;
 
             DisplaySurface surface = GetSurface(loc.SurfaceIndex);
@@ -1364,18 +1519,24 @@ namespace UniversalDisplayLib
             // renderer builds its matrix from.
             if (loc.IsPlacedItem)
             {
-                if (!be.TryResolveStackTarget(loc, dattr, out DisplaySlotId target, out rotDeg, out bool allowed))
+                if (!be.TryResolveStackTargetOn(loc, dattr, out DisplaySlotId target, out rotDeg, out bool allowed, blockSel))
                 {
                     return false;
                 }
 
                 loc = target;
-                fits = allowed;
+                fits = allowed && be.EmbeddedPlacementFits(target, dattr, rotDeg);
+                // The ghost's angle REPLACES ItemRotationDeg in BuildSlotMatrix, and that one includes the surface's own
+                // facing - as PreviewRotationDeg does on the pad path. The stack resolver gives the angle without it, so
+                // on a turned surface (a corner shelf's side) the stacked ghost faced the wrong way (Calm, 2026-10-19).
+                // Surfaces facing 0 (ordinary shelves, ground, carved floors) never showed it.
+                rotDeg += be.SurfaceFacingDeg(surface);
                 return true;
             }
 
             rotDeg = PreviewRotationDeg(be, surface);
-            fits = FitsAt(be, surface, loc, RotatedFootprint(dattr.Size, rotDeg));
+            fits = FitsAt(be, surface, loc, RotatedFootprint(dattr.Size, rotDeg))
+                && be.EmbeddedPlacementFits(loc, dattr, rotDeg);
             return true;
         }
 

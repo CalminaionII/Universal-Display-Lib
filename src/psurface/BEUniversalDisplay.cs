@@ -32,7 +32,7 @@ namespace UniversalDisplayLib
     /// The psurface *format* is kept identical to vanilla — shape element names and
     /// string slot ids — so shapes authored for cabinets work unchanged.
     /// </summary>
-    public class BEUniversalDisplay : BlockEntityContainer, ITexPositionSource, IAutoBoxesOwner, IAutoBoxesPartOfOwner
+    public partial class BEUniversalDisplay : BlockEntityContainer, ITexPositionSource, IAutoBoxesOwner, IAutoBoxesPartOfOwner
     {
         // ── Inventory ────────────────────────────────────────────────────────
         protected InventoryInfinite inv;
@@ -100,6 +100,12 @@ namespace UniversalDisplayLib
         private Cuboidf[] _padOnlyBoxes;
         private Cuboidf[] _allBoxes;
 
+        /// <summary>The placed items' footprint boxes from the last box rebuild (both sides alike) - itemCollision's boxes.</summary>
+        private Cuboidf[] _itemFootprints;
+
+        /// <summary>The block's JSON asks for its placed items to be solid (the ground pile).</summary>
+        bool ItemCollision => Block?.Attributes?["itemCollision"].AsBool(false) == true;
+
         /// <summary>
         /// Set when a placed item's outline had to use its written size because its mesh was not built yet (the
         /// boxes are made the moment an item goes in, the mesh a moment later when it is drawn). The next
@@ -134,7 +140,7 @@ namespace UniversalDisplayLib
         private CollectibleObject _nowTesselatingObj;
         private Shape _nowTesselatingShape;
 
-        public byte[] CachedLightHsv => _cachedLightHsv;
+        public byte[] CachedLightHsv => IsEmbedded ? embeddedEffects.Light : _cachedLightHsv;
 
         public BlockBehaviorDisplaySurfaces SurfaceBehavior => Block?.GetBehavior<BlockBehaviorDisplaySurfaces>();
 
@@ -202,13 +208,26 @@ namespace UniversalDisplayLib
             }
         }
 
+        /// <summary>
+        /// A block entity that is NOT in the world, for previewing: the placing ghost on bare ground (Universal Ground
+        /// Storage) needs a pile to measure and draw against before one exists. Client only; no ticks, no fillers,
+        /// nothing saved. Reads the block below once (followSupport) so the ghost sits where the item will.
+        /// </summary>
+        public static BEUniversalDisplay Phantom(ICoreClientAPI capi, Block block, BlockPos pos)
+        {
+            var be = new BEUniversalDisplay { Api = capi, capi = capi, Pos = pos.Copy(), Block = block };
+            if (be.FollowSupport) be.RefreshSupport(false);
+            return be;
+        }
+
         public BEUniversalDisplay()
         {
             inv = new InventoryInfinite((slotId, invBase) =>
             {
                 DisplaySlotId loc = DisplaySlotId.Decode(slotId);
                 string category = SurfaceBehavior?.GetDisplayCategory(loc?.SurfaceIndex ?? 0) ?? "shelf";
-                return new ItemSlotDisplay(invBase, category);
+                // takes bags with things in them too (ItemSlotDisplayBags)
+                return new ItemSlotDisplayBags(invBase, category);
             });
         }
 
@@ -225,12 +244,28 @@ namespace UniversalDisplayLib
 
             inv.OnAcquireTransitionSpeed += OnAcquireTransitionSpeed;
 
+            if (IsEmbedded)
+            {
+                StartEmbeddedEffects();
+                if (Api.Side == EnumAppSide.Server) ScheduleItemFillerCheck();
+                if (capi != null)
+                {
+                    LiveClientInstances.Add(this);
+                    _clientTickListener = RegisterGameTickListener(_ => RefreshEmbeddedMeshes(), 500);
+                    RefreshEmbeddedMeshes();
+                }
+                return;
+            }
+
             // NOTE: deliberately not subscribing to inv.SlotModified.
             // InventoryInfinite overrides DidModifyItemSlot to an empty method, so
             // SlotModified never fires for this inventory type. Content changes are
             // signalled explicitly through OnContentsChanged() instead.
 
             UpdateLightCache();
+            // A chunk/first-placement packet can initialize with items already loaded.
+            // Wait until this BE is attached to the accessor before registering its light.
+            if (capi != null) Api.Event.EnqueueMainThreadTask(ApplyLight, "udl-initial-stored-light");
 
             // Server only: the claim is authoritative state and reaches the client through the
             // tree like everything else. Doing it on both sides would have them adopt
@@ -239,6 +274,14 @@ namespace UniversalDisplayLib
             if (api.Side == EnumAppSide.Server) AdoptPreExistingLocks();
 
             AutoBoxesMeasureTurned();
+
+            // followSupport (the ground pile): read what it stands on now, and again every second - chiselling the block
+            // below changes no block id, so no neighbour event says so (Taxidermy's mounts found the same).
+            if (FollowSupport)
+            {
+                RefreshSupport(false);
+                RegisterGameTickListener(_ => RefreshSupport(true), 1000);
+            }
 
             // An old chain tall window (Window Display 1.0.5) converts as it loads; every window re-syncs its fillers once.
             if (api.Side == EnumAppSide.Server) Reach.LegacyTallWindows.Schedule(this);
@@ -249,7 +292,7 @@ namespace UniversalDisplayLib
 
             if (capi != null)
             {
-                animUtil = new BlockEntityAnimationUtil(capi, this);
+                // the animator is made by InitializeAnimator, and only for a block with something to open (Animates)
                 soundHandler = new DisplaySoundHandler(this, capi);
                 EnsureAnimatorCurrent();
                 UpdateAnimationState();
@@ -350,6 +393,7 @@ namespace UniversalDisplayLib
 
         public override void OnBlockRemoved()
         {
+            if (IsEmbedded) { _removed = true; if (Api?.Side == EnumAppSide.Server) AutoBoxes.ReleaseAll(Api.World, Pos, autoHeld); Cleanup(); base.OnBlockRemoved(); return; }
             LiveServerInstances.TryRemove(this, out _);
             if (Api?.Side == EnumAppSide.Server) AutoBoxes.ReleaseAll(Api.World, Pos, autoHeld);
             FreeGuests();
@@ -362,6 +406,7 @@ namespace UniversalDisplayLib
 
         public override void OnBlockUnloaded()
         {
+            if (IsEmbedded) { _removed = true; Cleanup(); base.OnBlockUnloaded(); return; }
             LiveServerInstances.TryRemove(this, out _);
             _removed = true;
             TellHosts(autoLayout);
@@ -382,11 +427,16 @@ namespace UniversalDisplayLib
             // disposals null their own fields.
             Cleanup();
 
+            // the items drop at their own size (see ItemScale)
+            foreach (ItemSlot stored in inv) ItemScale.Strip(stored?.Itemstack);
+
             base.OnBlockBroken(byPlayer);
         }
 
         private void Cleanup()
         {
+            if (IsEmbedded) StopEmbeddedEffects();
+            PublishStorageReach(_itemCells.Keys, Array.Empty<(int, int, int)>());
             // Leaving the registry is the whole point of it — see LiveClientInstances.
             // Cleanup runs from OnBlockRemoved, OnBlockUnloaded and OnBlockBroken, so a
             // window cannot stay in the set after it has gone.
@@ -422,14 +472,6 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Rebuilds the animator right now, on the caller's thread.
-        ///
-        /// Called client-side from TryPlaceBlock the moment MeshAngleRad is set. The
-        /// block entity is created during base.TryPlaceBlock, so Initialize builds
-        /// the renderer while the angle is still 0; without this the correction only
-        /// lands on the next client tick and you see the window snap into place.
-        /// </summary>
-        /// <summary>
         /// A stored slot by its id, resolved and non-empty, or null.
         ///
         /// Exists because the string-keyed indexer belongs to <c>InventoryInfinite</c> while
@@ -453,6 +495,14 @@ namespace UniversalDisplayLib
             return slot.Empty ? null : slot;
         }
 
+        /// <summary>
+        /// Rebuilds the animator right now, on the caller's thread.
+        ///
+        /// Called client-side from TryPlaceBlock the moment MeshAngleRad is set. The
+        /// block entity is created during base.TryPlaceBlock, so Initialize builds
+        /// the renderer while the angle is still 0; without this the correction only
+        /// lands on the next client tick and you see the window snap into place.
+        /// </summary>
         public void RefreshAnimator()
         {
             if (capi == null) return;
@@ -496,6 +546,7 @@ namespace UniversalDisplayLib
         /// </summary>
         public void OnContentsChanged()
         {
+            if (IsEmbedded) RefreshEmbeddedEffects();
             InvalidateBoxes();
             MarkMeshesDirty();
 
@@ -506,35 +557,7 @@ namespace UniversalDisplayLib
             // reloaded — which is exactly the "only updates on reload" behaviour.
             if (Api != null)
             {
-                byte[] oldLight = _cachedLightHsv;
-                UpdateLightCache();
-
-                bool changed = (oldLight == null) != (_cachedLightHsv == null)
-                    || (oldLight != null && _cachedLightHsv != null &&
-                        (oldLight[0] != _cachedLightHsv[0] || oldLight[1] != _cachedLightHsv[1] || oldLight[2] != _cachedLightHsv[2]));
-
-                if (changed)
-                {
-                    // ONLY strip the old light when there is no new one to overwrite it.
-                    //
-                    // This used to be an unconditional RemoveBlockLight followed immediately
-                    // by ApplyLight — which is, literally, turn the light off and then turn
-                    // it back on, and the player sees the gap between the two as a flash.
-                    // Vanilla does not do it: BlockEntityGroundStorage.LightUpdate is a bare
-                    // ExchangeBlock(Block.Id, Pos) with no removal, because the exchange
-                    // re-registers the block's light and overwrites whatever was there.
-                    //
-                    // The removal is still needed in exactly one case — the last light-
-                    // emitting item leaving. ApplyLight early-returns when _cachedLightHsv is
-                    // null, so with nothing to re-register the old light would otherwise sit
-                    // there until the chunk reloaded.
-                    if (oldLight != null && _cachedLightHsv == null)
-                    {
-                        Api.World.BlockAccessor.RemoveBlockLight(oldLight, Pos);
-                    }
-
-                    ApplyLight();
-                }
+                RefreshStoredLight();
             }
 
             MarkDirty(true);
@@ -542,8 +565,24 @@ namespace UniversalDisplayLib
 
         // ── Light from stored items ──────────────────────────────────────────
 
+        // Inventory packets also need this: a newly created client host starts empty,
+        // and does not run the server's TryPutAt/OnContentsChanged interaction.
+        private void RefreshStoredLight()
+        {
+            if (IsEmbedded || Api == null) return;
+            byte[] oldLight = _cachedLightHsv;
+            UpdateLightCache();
+            bool changed = (oldLight == null) != (_cachedLightHsv == null)
+                || (oldLight != null && _cachedLightHsv != null && !oldLight.SequenceEqual(_cachedLightHsv));
+            if (!changed) return;
+            if (oldLight != null && _cachedLightHsv == null)
+                Api.World.BlockAccessor.RemoveBlockLight(oldLight, Pos);
+            ApplyLight();
+        }
+
         private void UpdateLightCache()
         {
+            if (IsEmbedded) return;
             if (Api == null) return;
 
             // Resolve first, as every path that reads slot.Itemstack.Collectible must: an
@@ -574,6 +613,7 @@ namespace UniversalDisplayLib
 
         private void RemoveLight()
         {
+            if (IsEmbedded) return;
             if (Api != null && _cachedLightHsv != null)
             {
                 Api.World.BlockAccessor.RemoveBlockLight(_cachedLightHsv, Pos);
@@ -627,6 +667,7 @@ namespace UniversalDisplayLib
         /// </summary>
         public bool HasParticleEmittingItem()
         {
+            if (IsEmbedded) return embeddedEffects.Emitters.Length > 0;
             foreach (var kv in SlotsSnapshot())
             {
                 if (ParticlesFor(kv.Value, CategoryForSlot(kv.Key), out _) != null) return true;
@@ -821,6 +862,7 @@ namespace UniversalDisplayLib
         /// </summary>
         public void SpawnStoredItemParticles(IAsyncParticleManager manager, BlockPos pos, float windAffectednessAtPos)
         {
+            if (IsEmbedded) { SpawnEmbeddedParticles(manager, pos, windAffectednessAtPos); return; }
             if (inv == null || SurfaceBehavior == null) return;
 
             // One snapshot for the whole pass: SlotEmitPosition needs it too, to measure the
@@ -940,6 +982,8 @@ namespace UniversalDisplayLib
             // The offset is authored against the MODEL, so it has to go through the entry's own
             // transform before the item's placement rotation - see TransformedOffset.
             Vec3f offset = TransformedOffset(offsetVoxels, dattr);
+            float scale = ItemScale.For(slot);   // a resized candle keeps its flame on the wick
+            if (offset != null && scale != 1f) offset = new Vec3f(offset.X * scale, offset.Y * scale, offset.Z * scale);
 
             return new Matrixf()
                 .Translate(0.5f, 0f, 0.5f)
@@ -989,6 +1033,7 @@ namespace UniversalDisplayLib
                                 DisplayableAttributes selfAttr,
                                 KeyValuePair<string, ItemSlot>[] slots = null)
         {
+            if (loc != null && FreeData(loc.Encoded) is { } free) return free.RestY;
             if (loc == null || surface == null || loc.Y <= 0f) return 0f;
 
             slots ??= SlotsSnapshot();
@@ -1026,8 +1071,110 @@ namespace UniversalDisplayLib
                                KeyValuePair<string, ItemSlot>[] slots = null,
                                float? nudgeOverrideVoxels = null)
         {
+            if (loc != null && FreeData(loc.Encoded) is { } free)
+                return free.RestY + (nudgeOverrideVoxels ?? ChosenHeightVoxels(loc.Encoded));
             return StackBaseY(loc, surface, selfAttr, slots)
-                 + (nudgeOverrideVoxels ?? ChosenHeightVoxels(loc?.Encoded));
+                 + (nudgeOverrideVoxels ?? ChosenHeightVoxels(loc?.Encoded))
+                 + SupportUnder(loc, surface, selfAttr, slots)
+                 + (loc?.SurfaceIndex == 0 ? EmbeddedFloorVoxels : 0f);
+        }
+
+        // ── followSupport: rest on what is underneath (the ground pile) ──────────────────────────────────
+
+        /// <summary>The block's JSON asks its items to rest on the block below as it really is (slab, chiselled top).</summary>
+        internal bool FollowSupport => Block?.Attributes?["followSupport"].AsBool(false) == true;
+
+        /// <summary>The block below's collision boxes, in that block's units - read on the main thread, read anywhere.</summary>
+        volatile Cuboidf[] _support;
+
+        /// <summary>
+        /// Reads the block below. A change (chiselled, slab swapped) redraws and rebuilds the boxes; on the server, nothing
+        /// left to stand on breaks the block like a removed support would (needsSupport).
+        /// </summary>
+        void RefreshSupport(bool react)
+        {
+            if (Api == null) return;
+            BlockPos below = Pos.DownCopy();
+            Cuboidf[] boxes = Api.World.BlockAccessor.GetBlock(below)?.GetCollisionBoxes(Api.World.BlockAccessor, below)
+                              ?? Array.Empty<Cuboidf>();
+            if (!UpdateSupport(boxes)) return;
+            if (!react) return;
+
+            if (Api.Side == EnumAppSide.Server && !boxes.Any(b => b != null)
+                && Block?.Attributes?["needsSupport"].AsBool(false) == true)
+            {
+                Api.World.BlockAccessor.BreakBlock(Pos, null);
+                return;
+            }
+            InvalidateBoxes();
+            MarkMeshesDirty();
+            if (capi != null) capi.World.BlockAccessor.MarkBlockDirty(Pos);
+        }
+
+        // Compare model-derived coordinates without formatting every box every second.
+        // Copy only on a change: game/mod collision arrays may be edited in place.
+        bool UpdateSupport(Cuboidf[] boxes)
+        {
+            var previous = _support;
+            int count = 0;
+            bool same = previous != null;
+            foreach (var box in boxes)
+            {
+                if (box == null) continue;
+                if (same && (count >= previous.Length || !SameSupportBox(previous[count], box))) same = false;
+                count++;
+            }
+            if (same && count == previous.Length) return false;
+            var support = new Cuboidf[count];
+            int index = 0;
+            foreach (var box in boxes) if (box != null) support[index++] = box.Clone();
+            PublishSupport(support);
+            return true;
+        }
+
+        static bool SameSupportBox(Cuboidf a, Cuboidf b)
+            => a.X1 == b.X1 && a.Y1 == b.Y1 && a.Z1 == b.Z1
+                && a.X2 == b.X2 && a.Y2 == b.Y2 && a.Z2 == b.Z2;
+
+        // Keep volatile publication outside the method ARL scans for block Attributes.
+        // ARL 3.1's stack emulator cannot interpret the volatile IL prefix. The
+        // publication still uses the same volatile field; readers keep their barrier.
+        void PublishSupport(Cuboidf[] support) => _support = support;
+
+        /// <summary>
+        /// How far an item rests above (+) or below (-) this block's floor, in voxels: the top of the highest support box
+        /// under its footprint (the item sits on the highest point it covers), else the highest anywhere. 0 unless followSupport.
+        /// A stacked item takes the bottom item's footprint, so a pile moves as one.
+        /// </summary>
+        float SupportUnder(DisplaySlotId loc, DisplaySurface surface, DisplayableAttributes selfAttr,
+                           KeyValuePair<string, ItemSlot>[] slots)
+        {
+            if (loc == null || surface == null || !FollowSupport) return 0f;
+            DisplayableAttributes baseAttr = selfAttr;
+            string baseId = loc.WithY(0).Encoded;
+            if (loc.Y > 0)
+                baseAttr = FindSlotAttributes(slots ?? SlotsSnapshot(), baseId,
+                               surface.DisplayCategory ?? BlockBehaviorDisplaySurfaces.DefaultDisplayCategory) ?? selfAttr;
+            Size3f size = baseAttr?.Size != null
+                ? BlockBehaviorDisplaySurfaces.RotatedFootprint(baseAttr.Size, ItemRotationDeg(baseId, baseAttr, surface))
+                : new Size3f(1f, 1f, 1f);
+            return SupportVoxels(surface.VoxelPosition.X + loc.X, surface.VoxelPosition.Z + loc.Z, size.Width / 2f, size.Length / 2f);
+        }
+
+        /// <summary>The support height (voxels, -16..16) under a rectangle centred on (cx, cz) in this block's voxels.</summary>
+        public float SupportVoxels(float cx, float cz, float halfW, float halfL)
+        {
+            Cuboidf[] boxes = _support;
+            if (boxes == null || boxes.Length == 0 || !FollowSupport) return 0f;
+            float x1 = (cx - halfW) / 16f, x2 = (cx + halfW) / 16f, z1 = (cz - halfL) / 16f, z2 = (cz + halfL) / 16f;
+            float top = float.MinValue, any = float.MinValue;
+            foreach (Cuboidf b in boxes)
+            {
+                any = Math.Max(any, b.Y2);
+                if (b.X2 > x1 && b.X1 < x2 && b.Z2 > z1 && b.Z1 < z2) top = Math.Max(top, b.Y2);
+            }
+            if (top == float.MinValue) top = any;
+            return GameMath.Clamp((top - 1f) * 16f, -16f, 16f);
         }
 
         /// <summary>
@@ -1343,6 +1490,14 @@ namespace UniversalDisplayLib
         /// </summary>
         public Cuboidf[] GetSelectionBoxes()
         {
+            // CHISEL THROUGH A GROUND PILE (chisel-edit trial, Calm 2026-10-19: "while a chisel is held, let the chisel
+            // reach the block under a Ground Display pile, like stacked chiselled blocks"): on the client, with chisel +
+            // hammer in hand, a followSupport pile offers nothing to aim at, so the aim reaches the chiselled block below.
+            // The chisel guard (ChiselShelfSystem.Chisel) still protects the voxels the pile's items stand on.
+            if (FollowSupport && Api is ICoreClientAPI chiselClient
+                && ChisellingToolsHeld(chiselClient.World.Player?.InventoryManager?.ActiveHotbarSlot, chiselClient.World.Player))
+                return Array.Empty<Cuboidf>();
+
             // A rebuilt grid makes every cached box stale, wherever it is.
             if (_boxesGeneration != BlockBehaviorDisplaySurfaces.GridGeneration) InvalidateBoxes();
 
@@ -1414,6 +1569,7 @@ namespace UniversalDisplayLib
             bool stacked = IsStacked;
             int[] shownWhenStacked = stacked ? ShownSurfacesWhenStacked() : null;
 
+            var upperPads = new List<CuboidfWithId>();
             if (bh != null)
             {
                 // Placement pads FIRST: a measured box level with a pad (a Static part under a surface) must not
@@ -1421,8 +1577,10 @@ namespace UniversalDisplayLib
                 // Placement pads, flattened to a 1-voxel lip like vanilla.
                 // A stacked surface contributes none, so it cannot be aimed at — the
                 // window above covers it.
-                foreach (CuboidfWithId pad in bh.GridBoxes)
+                foreach (CuboidfWithId pad in IsEmbedded ? Array.Empty<CuboidfWithId>() : bh.GridBoxes)
                 {
+                    // (2026-10-17) a pad set below lands in upperPads when its surface is in ANOTHER space (a 2-high shelf's
+                    // upper shelves) - see SetPadCells
                     if (stacked)
                     {
                         // An id that will not decode keeps its pad, as it did before —
@@ -1437,6 +1595,9 @@ namespace UniversalDisplayLib
 
                     CuboidfWithId rotated = Rotated(pad, pad.Id);
                     rotated.Y1 -= 0.0625f;
+                    if (rotated.Y2 >= 1f - 0.001f || rotated.X1 >= 1f || rotated.Z1 >= 1f || rotated.X2 <= 0f || rotated.Z2 <= 0f) upperPads.Add(rotated);
+                    if (FollowSupport)
+                        rotated.Y1 += SupportVoxels((rotated.X1 + rotated.X2) * 8f, (rotated.Z1 + rotated.Z2) * 8f, 0.25f, 0.25f) / 16f;
                     rotated.Y2 = rotated.Y1 + 0.0625f;
                     boxes.Add(rotated);
                 }
@@ -1464,6 +1625,7 @@ namespace UniversalDisplayLib
             // per item: the written-footprint box (the SAME on server and client - which other spaces it reaches, so a filler's
             // box list, and the box index the game sends, agree) and the outline drawn there (the client's drawn box)
             var itemReach = new List<(Cuboidf footprint, Cuboidf outline)>();
+            var footprints = new List<Cuboidf>();
             if (bh != null)
             {
                 // Snapshot once for StackBaseY below rather than per item — it measures the
@@ -1514,6 +1676,7 @@ namespace UniversalDisplayLib
                     bool bySize = BlockBehaviorDisplaySurfaces.OutlineFromSize(slot, surface.DisplayCategory);
                     Cuboidf drawn = capi == null || bySize ? null : DrawnItemBox(kv.Key, slot, slots);
                     CuboidfWithId footprint = Rotated(itemBox, DisplaySlotId.PlacedPrefix + kv.Key);
+                    footprints.Add(footprint);
                     if (drawn != null)
                     {
                         var outline = new CuboidfWithId(drawn) { Id = DisplaySlotId.PlacedPrefix + kv.Key };
@@ -1530,6 +1693,9 @@ namespace UniversalDisplayLib
             }
 
             _allBoxes = withItems.ToArray();
+            SetPadCells(upperPads);
+            _itemFootprints = footprints.ToArray();
+            if (ItemCollision) { _collisionBoxes = null; _collisionWithGuests = null; }
             SetItemCells(itemReach);
         }
 
@@ -1541,11 +1707,22 @@ namespace UniversalDisplayLib
 
         private bool IsPlacingPreview()
         {
+            if (IsEmbedded) return false; // real voxels are the pads; keep stored-item targets visible
             if (capi == null) return false;
+
+            // The explicit outline control must expose placed-item boxes as well as
+            // drawing them. Otherwise a non-stacking held item hides the very flowerpot
+            // (or its contents) whose box the player asked to see.
+            if (BlockBehaviorDisplaySurfaces.ForceFootprintBox) return false;
 
             ItemSlot held = capi.World.Player?.InventoryManager?.ActiveHotbarSlot;
             BlockSelection sel = capi.World.Player?.CurrentBlockSelection;
             if (held == null || held.Empty || sel?.SelectionBoxId == null) return false;
+
+            // A liquid container is also a displayable item, but its right-click can
+            // pour/fill the precise contained item. Never hide that target in favour
+            // of the floor pad while deciding whether the held container can be placed.
+            if (held.Itemstack?.Collectible is ILiquidInterface) return false;
 
             // Slot ids are local to their owning display. A shelf above this stand can
             // use the same ids for different items; its placement must not hide ours.
@@ -1581,7 +1758,9 @@ namespace UniversalDisplayLib
             // stack buries them: without this you had to aim at the very base of a stack to
             // add to it. With the item boxes visible, aiming at ANY item in the stack finds
             // it by collision and TryStack walks up to the first free level.
-            if (dattr.Behavior == EnumDisplayableBehavior.Stacking
+            // FREE STACKING (1.3.1): ANY displayable item can go on top of another, so the item boxes are exposed for
+            // any held item, not only "Stacking" ones (Calm, 2026-10-19: "free form stacking on anything").
+            if ((FreeStackingEnabled || dattr.Behavior == EnumDisplayableBehavior.Stacking)
                 && GetCollidingSlotId(loc, new Cuboidf(dattr.Size)) != null)
             {
                 return false;
@@ -1604,7 +1783,7 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>What this block takes up for another window's room check: its own collision and every guest's piece but that window's.</summary>
-        Cuboidf[] CollisionExcept(BlockPos asker)
+        public Cuboidf[] CollisionExcept(BlockPos asker)
         {
             IEnumerable<Cuboidf> all = OwnCollisionBoxes();
             foreach (BEUniversalDisplay guest in Guests())
@@ -1618,7 +1797,7 @@ namespace UniversalDisplayLib
         {
             // The window's own piece of its measured box (AutoBoxes Kit); fillers hold the rest
             Cuboidf[] auto = AutoCollisionAt(Pos);
-            if (auto.Length > 0) return auto;
+            if (autoLayout.Collision.TryGetValue((0,0,0),out var nativeLocal) && nativeLocal.Length > 0) return auto;
             // Snapshot for the same reason as GetSelectionBoxes: this is read off the main
             // thread while InvalidateBoxes can null the field from the network thread.
             Cuboidf[] cached = _collisionBoxes;
@@ -1650,6 +1829,7 @@ namespace UniversalDisplayLib
 
             // Return the local, not the field — the field can be nulled by a concurrent
             // InvalidateBoxes between the assignment and the return.
+            result.AddRange(ItemCollisionAt(Pos));
             cached = result.ToArray();
             _collisionBoxes = cached;
             return cached;
@@ -1696,6 +1876,11 @@ namespace UniversalDisplayLib
         public string GetCollidingSlotId(DisplaySlotId at, Cuboidf placeBox)
         {
             if (at == null) return null;
+            // An item selection identifies a column exactly. A wider held item can also
+            // overlap a neighbouring column; dictionary order must not redirect stacking
+            // there while the preview and contained interaction target the aimed bowl.
+            if (at.IsPlacedItem && inv.SlotsByslotId.TryGetValue(at.Encoded, out ItemSlot aimed)
+                && aimed is { Empty: false }) return at.Encoded;
             foreach (var entry in ContentCuboids(at.SurfaceIndex))
             {
                 if (entry.Key.Intersects(placeBox, at.X, at.Y, at.Z)) return entry.Value;
@@ -1739,6 +1924,13 @@ namespace UniversalDisplayLib
 
         public bool OnBlockInteractStart(IWorldAccessor world, IPlayer byPlayer, BlockSelection blockSel)
         {
+            // Some forwarding/game interaction paths supply an index without its ID.
+            // Resolve it once before deciding between contained use, taking and stacking.
+            if (blockSel != null && blockSel.SelectionBoxId == null)
+            {
+                blockSel = blockSel.Clone();
+                blockSel.SelectionBoxId = AimedBoxId(blockSel);
+            }
             // These parts stop the ray but have no action. Consume the click before it can
             // fall through to pane toggles, display placement, swapping or held-item use.
             if (IsHiddenPartBox(AimedBoxId(blockSel))) return true;
@@ -1886,9 +2078,12 @@ namespace UniversalDisplayLib
             if (IsSurfaceStacked(loc.SurfaceIndex)) return false;
 
             ItemSlot held = byPlayer.InventoryManager.ActiveHotbarSlot;
+            if (SuppressPlacement(held, byPlayer)) return false;
             string category = surface.DisplayCategory ?? "shelf";
             DisplayableAttributes dattr = BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(held, category);
             if (dattr == null) return false;
+            if (FreeStackingEnabled && loc.IsPlacedItem)
+                return TryPutFreeStack(byPlayer, blockSel, loc, dattr);
 
             Size3i surfaceSize = surface.Size;
 
@@ -1897,7 +2092,7 @@ namespace UniversalDisplayLib
             // fitted across a sill it will not fit along. Every check below therefore works
             // on the TURNED footprint, and the same angle is stored on the slot afterwards
             // so the model, the box and the collision all agree from the first frame.
-            int placeRot = PlacementRotation.For(Api, byPlayer);
+            int placeRot = PlacementRotation.ForSurface(Api, byPlayer, this, surface);
 
             // AIMING AT AN ITEM ALREADY THERE MEANS STACKING ONTO IT, so inherit that item's
             // angle — and inherit it HERE, before the fit checks below, not later in
@@ -1917,31 +2112,34 @@ namespace UniversalDisplayLib
                 // The CHOSEN angle, not StoredRotationDeg — that one adds jitter, and this
                 // value is about to be stored as the new item's chosen angle, which would
                 // then have jitter added again on every read. Each item keeps its own nudge.
-                if (baseAttr != null) placeRot = (int)Math.Round(ChosenRotationDeg(loc.Encoded));
+                if (baseAttr != null && !PlacementRotation.HasPending(Api, byPlayer)) placeRot = (int)Math.Round(ChosenRotationDeg(loc.Encoded));
             }
 
             Size3f itemSize = BlockBehaviorDisplaySurfaces.RotatedFootprint(
                 dattr.Size, placeRot + SurfaceFacingDeg(surface));
 
-            if (surfaceSize.Width < itemSize.Width || surfaceSize.Height < itemSize.Height || surfaceSize.Length < itemSize.Length)
+            Size3f fitSize = FitSize(itemSize); // the checks below give half a voxel on every side (lib 1.3.1)
+            if (surfaceSize.Width < fitSize.Width || (!UnboundedStacking && surfaceSize.Height < fitSize.Height) || surfaceSize.Length < fitSize.Length)
             {
                 (Api as ICoreClientAPI)?.TriggerIngameError(this, "toolarge", Lang.Get("shelfhelp-toolarge-error"));
                 return true;
             }
 
-            Vec3f offset = BlockBehaviorDisplaySurfaces.GetCentreOffset(itemSize);
+            Vec3f offset = BlockBehaviorDisplaySurfaces.GetCentreOffset(fitSize);
             if (loc.X + offset.X < 0f || loc.Z + offset.Z < 0f
-                || loc.X + offset.X > surfaceSize.Width - itemSize.Width
-                || loc.Z + offset.Z > surfaceSize.Length - itemSize.Length)
+                || loc.X + offset.X > surfaceSize.Width - fitSize.Width
+                || loc.Z + offset.Z > surfaceSize.Length - fitSize.Length)
             {
                 (Api as ICoreClientAPI)?.TriggerIngameError(this, "outofbounds", Lang.Get("shelfhelp-outofbounds-error"));
                 return true;
             }
 
-            string collidingSlotId = GetCollidingSlotId(loc, new Cuboidf(itemSize));
+            string collidingSlotId = GetCollidingSlotId(loc, new Cuboidf(fitSize));
             if (collidingSlotId != null)
             {
-                if (dattr.Behavior == EnumDisplayableBehavior.Stacking) return TryStack(byPlayer, collidingSlotId, dattr, placeRot);
+                // With free stacking a stack is made by aiming AT the item below (TryPutFreeStack); an aim at the surface
+                // that would overlap an item is refused like any other overlap, as the ghost already shows it in red.
+                if (!FreeStackingEnabled && dattr.Behavior == EnumDisplayableBehavior.Stacking) return TryStack(byPlayer, collidingSlotId, dattr, placeRot);
 
                 // OVERLAP ALLOWED: the collision is DETECTED exactly as before — the stacking
                 // branch above depends on it — it simply stops being a refusal. Turning the
@@ -1962,6 +2160,7 @@ namespace UniversalDisplayLib
                 }
             }
 
+            if (!EmbeddedPlacementFits(loc, dattr, placeRot, byPlayer)) return true;
             return PlaceItem(byPlayer, held, loc.Encoded, placeRot);
         }
 
@@ -1997,7 +2196,9 @@ namespace UniversalDisplayLib
             // otherwise: the base must still be inside the surface, so the topmost item may
             // overhang it. Tightening that to "the whole item must fit" would retroactively
             // make existing piles illegal.
-            if (StackBaseY(cursor, surface, dattr) >= surface.Size.Height) return false;
+            if (!UnboundedStacking && StackBaseY(cursor, surface, dattr) >= surface.Size.Height) return false;
+
+            if (!StackTargetFits(cursor, surface, dattr, rotDeg, byPlayer)) return true;
 
             return PlaceItem(byPlayer, byPlayer.InventoryManager.ActiveHotbarSlot, cursor.Encoded, rotDeg);
         }
@@ -2033,6 +2234,9 @@ namespace UniversalDisplayLib
                 customHeightBySlot[targetSlotId] = placeHeight;
             }
 
+            // The size it was placed at, kept on the item itself - see ItemScale.
+            ItemScale.Set(target.Itemstack, PlacementScale.For(Api, byPlayer));
+
             // If this is the first chiselled block on a lockable surface, it becomes that
             // surface's permanent design. Here rather than in TryPut/TryStack because both
             // funnel through this method, so "first" is decided in exactly one place.
@@ -2040,15 +2244,16 @@ namespace UniversalDisplayLib
 
             // One turn, one placement. Stacking inherits from the item below, so a pile is
             // still uniform without pressing the key again.
-            PlacementRotation.ResetAfterPlacing(Api, byPlayer);
+            PlacementRotation.ResetAfterPlacing(Api, byPlayer, Pos, targetSlotId);
 
             // The nudge is NOT inherited when stacking, unlike the angle — see
             // PlacementHeight.ResetAfterPlacing for why.
             PlacementHeight.ResetAfterPlacing(Api, byPlayer);
+            PlacementScale.ResetAfterPlacing(Api, byPlayer);
 
             OnContentsChanged();
 
-            Api.World.PlaySoundAt(target.Itemstack?.Block?.Sounds?.Place ?? GlobalConstants.DefaultBuildSound, byPlayer.Entity, byPlayer);
+            DisplayItemSounds.Play(Api.World, DisplayItemSounds.Resolve(target.Itemstack, false), byPlayer.Entity);
             Api.World.Logger.Audit("{0} put 1x{1} into window storage at {2}, slot {3}.",
                 byPlayer.PlayerName, target.Itemstack?.Collectible.Code, Pos, targetSlotId);
             return true;
@@ -2058,6 +2263,8 @@ namespace UniversalDisplayLib
         {
             string slotId = GetSelectedNonEmptySlotId(blockSel);
             if (slotId == null) return false;
+            if (RefuseFreeSupportEdit(slotId)) return true;
+            bool freeTaken = freeStacks.ContainsKey(slotId);
             if (IsSlotSurfaceStacked(slotId)) return false;
 
             // A locked chiselled design is not takeable by hand — see IsSlotLocked. Break the
@@ -2078,14 +2285,13 @@ namespace UniversalDisplayLib
             if (slot == null || slot.Empty) return false;
 
             ItemStack taken = slot.TakeOut(1);
-            if (byPlayer.InventoryManager.TryGiveItemstack(taken))
-            {
-                Api.World.PlaySoundAt(taken?.Block?.Sounds?.Place ?? GlobalConstants.DefaultBuildSound, byPlayer.Entity, byPlayer);
-            }
-            else if (taken != null && taken.StackSize > 0)
+            ItemScale.Strip(taken);   // its display size stays behind, so it stacks in an inventory as before
+            var pickupSound = DisplayItemSounds.Resolve(taken, true);
+            if (!byPlayer.InventoryManager.TryGiveItemstack(taken) && taken != null && taken.StackSize > 0)
             {
                 Api.World.SpawnItemEntity(taken, Pos);
             }
+            if (taken != null) DisplayItemSounds.Play(Api.World, pickupSound, byPlayer.Entity);
 
             // Drop the taken item's angle FIRST. Doing it after the collapse below deleted
             // the angle of whatever had just moved down into this slot instead. The height
@@ -2099,6 +2305,9 @@ namespace UniversalDisplayLib
             // so moving only the Itemstack left the angle behind on the old key and the item
             // fell back to its placement jitter — reported as "take the bottom one and the
             // next one up reverts to its original position".
+            if (freeTaken) ForgetFreeStack(slotId);
+            if (!freeTaken)
+            {
             DisplaySlotId gap = DisplaySlotId.Decode(slotId);
             DisplaySlotId above = gap.UpCopy();
             while (true)
@@ -2150,10 +2359,90 @@ namespace UniversalDisplayLib
                 gap = gap.UpCopy();
                 above = above.UpCopy();
             }
+            }
 
             OnContentsChanged();
+            RemoveIfEmpty();
             return true;
         }
+
+        /// <summary>
+        /// Server: a block whose JSON sets <c>removeWhenEmpty</c> goes once its last item is taken - the ground pile
+        /// (Universal Ground Storage) leaves no empty block behind, as the game's own ground storage does not.
+        /// </summary>
+        private void RemoveIfEmpty()
+        {
+            if (IsEmbedded) return;
+            if (Api?.Side != EnumAppSide.Server || !inv.Empty) return;
+            if (Block?.Attributes?["removeWhenEmpty"].AsBool(false) != true) return;
+            Api.World.BlockAccessor.SetBlock(0, Pos);
+        }
+
+        /// <summary>
+        /// Places the player's held item at a point on this block's surfaces, exactly as a click on the placement pad
+        /// under that point would - claims, fit, stacking and the chosen angle included. For another mod's code that
+        /// has just put the block down and wants the item that started it placed where the player aimed
+        /// (Universal Ground Storage). <paramref name="hitInBlock"/> is in block units, 0-1 on each axis.
+        /// </summary>
+        public bool TryPutAt(IPlayer byPlayer, Vec3d hitInBlock)
+        {
+            if (byPlayer == null) return false;
+            BlockSelection sel = PadSelectionAt(hitInBlock);
+            return sel != null && OnBlockInteractStart(Api.World, byPlayer, sel);
+        }
+
+        public bool TryPutAt(IPlayer byPlayer, Vec3d hitInBlock, int surfaceIndex)
+        {
+            if (byPlayer == null) return false;
+            var selection = PadSelectionAt(hitInBlock, surfaceIndex);
+            return selection != null && OnBlockInteractStart(Api.World, byPlayer, selection);
+        }
+
+        /// <summary>A selection naming the placement pad under a point of this block (0-1 units, x and z), or null.</summary>
+        public BlockSelection PadSelectionAt(Vec3d hitInBlock)
+            => PadSelectionAt(hitInBlock, null);
+
+        public BlockSelection PadSelectionAt(Vec3d hitInBlock, int? surfaceIndex)
+        {
+            BlockBehaviorDisplaySurfaces bh = SurfaceBehavior;
+            if (bh == null || hitInBlock == null) return null;
+            foreach (CuboidfWithId r in RotatedPads(bh, surfaceIndex ?? -1))
+            {
+                if (hitInBlock.X < r.X1 || hitInBlock.X >= r.X2 || hitInBlock.Z < r.Z1 || hitInBlock.Z >= r.Z2) continue;
+                return new BlockSelection
+                {
+                    Position = Pos.Copy(),
+                    HitPosition = hitInBlock.Clone(),
+                    Face = BlockFacing.UP,
+                    SelectionBoxId = r.Id
+                };
+            }
+            return null;
+        }
+
+        /// <summary>
+        /// A surface's pads (-1: every surface) turned with this block - KEPT, not rebuilt per call (Calm 2026-10-22: the
+        /// ghost lagged holding a hammer or knife over a chiselled block or bare ground). PadSelectionAt is asked twice a
+        /// frame there (the ghost and the outline), and turning every pad of a carved floor's 1,024 on each call made
+        /// hundreds of thousands of boxes a second for the garbage collector. Rebuilt when the turn, the grids
+        /// (GridGeneration) or the block's behaviour change. Read on the main thread; a race only builds a list twice.
+        /// </summary>
+        private CuboidfWithId[] RotatedPads(BlockBehaviorDisplaySurfaces bh, int surfaceIndex)
+        {
+            RotatedPadCache cache = _rotatedPads;
+            if (cache == null || cache.Angle != MeshAngleRad || cache.Generation != BlockBehaviorDisplaySurfaces.GridGeneration
+                || !ReferenceEquals(cache.Behavior, bh))
+                _rotatedPads = cache = new RotatedPadCache(MeshAngleRad, BlockBehaviorDisplaySurfaces.GridGeneration, bh);
+            return cache.BySurface.GetOrAdd(surfaceIndex, index =>
+                (index >= 0 ? bh.GridBoxesForSurface(index) : bh.GridBoxes).Select(pad => Rotated(pad, pad.Id)).ToArray());
+        }
+
+        private sealed record RotatedPadCache(float Angle, int Generation, BlockBehaviorDisplaySurfaces Behavior)
+        {
+            public readonly ConcurrentDictionary<int, CuboidfWithId[]> BySurface = new();
+        }
+
+        private volatile RotatedPadCache _rotatedPads;
 
         /// <summary>
         /// The random resting angle an item is given on placement, from its
@@ -2166,6 +2455,7 @@ namespace UniversalDisplayLib
             //   config PlacementJitter=false  -> the whole mod sits square
             //   block  noPlacementJitter      -> that block sits square (the chiselled window)
             //   item   randYRotAngle: 0       -> that item sits square, set in the patches mod
+            if (FreeData(slotId) != null) return 0f;
             if (JitterSuppressed) return 0f;
             if (dattr == null || dattr.RandYRotAngle <= 0) return 0f;
 
@@ -2251,6 +2541,14 @@ namespace UniversalDisplayLib
         /// </summary>
         private bool RotationFits(string slotId, float rotDeg)
         {
+            if (freeStacks.ContainsKey(slotId))
+            {
+                var freeLoc=DisplaySlotId.Decode(slotId);
+                var plane=SurfaceBehavior?.GetSurface(freeLoc.SurfaceIndex);
+                var props=BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(inv[slotId],plane.DisplayCategory);
+                return FreePlacementFits(freeLoc,props,rotDeg,ChosenHeightVoxels(slotId),null);
+            }
+            if (IsEmbedded) return EmbeddedEditFits(slotId, rotDeg, null, null);
             if (!inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot slot) || slot.Empty) return true;
 
             DisplaySlotId loc = DisplaySlotId.Decode(slotId);
@@ -2298,6 +2596,7 @@ namespace UniversalDisplayLib
         /// </param>
         public bool RotateStoredItem(string slotId, IPlayer byPlayer, bool reverse, float stepDeg = 0f)
         {
+            if (IsEmbedded && byPlayer != null && !Api.World.Claims.TryAccess(byPlayer, Pos, EnumBlockAccessFlags.Use)) return false;
             if (slotId == null || inv[slotId] is not { Empty: false }) return false;
 
             // A locked design does not turn. "Once placed is placed" has to cover this and
@@ -2317,10 +2616,8 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Raise or lower an item already on a surface, from the sneak+wheel packet.
         ///
-        /// NO FIT CHECK, unlike rotating. A turn changes the space an item needs, so it can
-        /// stop fitting; a vertical nudge cannot — the footprint is unchanged and stack
-        /// levels are counted, not measured, so nothing it can do makes an occupied slot
-        /// collide with another. The configured limit is the only guard it needs.
+        /// Normal shelves retain their free height nudge within the configured limit.
+        /// Embedded storage additionally checks the real floor, walls, roof and items.
         /// </summary>
         /// <param name="stepVoxels">
         /// The step the PLAYER asked for, from their own config, arriving in the packet.
@@ -2330,7 +2627,11 @@ namespace UniversalDisplayLib
         /// this side's config, which is what an older client will do.
         /// </param>
         public bool AdjustStoredItemHeight(string slotId, bool down, float stepVoxels = 0f)
+            => AdjustStoredItemHeight(slotId, down, stepVoxels, null);
+
+        public bool AdjustStoredItemHeight(string slotId, bool down, float stepVoxels, IPlayer player)
         {
+            if (RefuseFreeSupportEdit(slotId)) return false;
             if (slotId == null) return false;
             if (!inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot slot) || slot == null || slot.Empty)
             {
@@ -2346,16 +2647,65 @@ namespace UniversalDisplayLib
             float step = stepVoxels > 0f ? Math.Clamp(stepVoxels, 0.05f, 4f) : PlacementHeight.Step;
 
             float wanted = PlacementHeight.Clamp(current + (down ? -step : step));
+            if (freeStacks.ContainsKey(slotId))
+            {
+                var freeLoc=DisplaySlotId.Decode(slotId);
+                var plane=SurfaceBehavior.GetSurface(freeLoc.SurfaceIndex);
+                var props=BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(slot,plane.DisplayCategory);
+                if (!FreePlacementFits(freeLoc,props,ChosenRotationDeg(slotId),wanted,player)) return true;
+            }
+            if (IsEmbedded && !freeStacks.ContainsKey(slotId) && !EmbeddedEditFits(slotId, null, wanted, player)) return true;
 
             // An entry of exactly 0 is the same as no entry, so drop it rather than saving a
             // key that says "unchanged" — nudging an item back to where it started should
             // leave the block as it was before anyone touched it.
             if (wanted == 0f) customHeightBySlot.Remove(slotId);
             else customHeightBySlot[slotId] = wanted;
+            if (IsEmbedded) RefreshEmbeddedEffects();
 
             // Boxes with the meshes, for the reason spelled out in TryRotateItem: they are
             // derived from item state, so a stale set outlives the change and the item
             // becomes unclickable where it now is.
+            InvalidateBoxes();
+            MarkMeshesDirty();
+            MarkDirty(true);
+            return true;
+        }
+
+        /// <summary>
+        /// Size an item already on a surface up or down one step, from the Resize key + wheel packet (lib 1.4.0).
+        /// Refused, like raising, while something rests on it; refused when the new size does not fit where it sits -
+        /// the size is tried on the item and the same check a turn uses decides, then put back if it fails.
+        /// </summary>
+        public bool AdjustStoredItemScale(string slotId, bool down, IPlayer player)
+        {
+            if (RefuseFreeSupportEdit(slotId)) return false;
+            if (slotId == null || !inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot slot) || slot == null || slot.Empty) return false;
+            if (IsSlotLocked(slotId)) return false;
+            if (IsEmbedded && player != null && !Api.World.Claims.TryAccess(player, Pos, EnumBlockAccessFlags.Use)) return false;
+
+            float current = ItemScale.Of(slot.Itemstack);
+            float wanted = PlacementScale.Clamp(current + (down ? -PlacementScale.Step : PlacementScale.Step));
+            if (wanted == current) return true;
+
+            ItemScale.Set(slot.Itemstack, wanted);
+            bool fits;
+            if (freeStacks.ContainsKey(slotId))
+            {
+                var freeLoc = DisplaySlotId.Decode(slotId);
+                var plane = SurfaceBehavior?.GetSurface(freeLoc?.SurfaceIndex ?? -1);
+                var props = plane == null ? null : BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(slot, plane.DisplayCategory);
+                fits = props != null && FreePlacementFits(freeLoc, props, ChosenRotationDeg(slotId), ChosenHeightVoxels(slotId), player);
+            }
+            else fits = IsEmbedded ? EmbeddedEditFits(slotId, null, null, player) : RotationFits(slotId, ChosenRotationDeg(slotId));
+
+            if (!fits)
+            {
+                ItemScale.Set(slot.Itemstack, current);
+                return true;   // handled: refusing is a result
+            }
+
+            if (IsEmbedded) RefreshEmbeddedEffects();
             InvalidateBoxes();
             MarkMeshesDirty();
             MarkDirty(true);
@@ -2368,6 +2718,7 @@ namespace UniversalDisplayLib
         /// </param>
         private bool TryRotateItem(string slotId, IPlayer byPlayer, bool reverse, float stepDeg = 0f)
         {
+            // Turning an item with others on top is allowed (Calm, 2026-10-19: "turning is fine").
             customRotationDegBySlot ??= new Dictionary<string, float>();
 
             float step = stepDeg > 0f
@@ -2386,7 +2737,8 @@ namespace UniversalDisplayLib
             // Turning an item can change the space it needs — a quarter turn swaps width and
             // length — so it may no longer fit where it sits. Check before committing, or a
             // rotated item silently overlaps its neighbour or hangs off the sill.
-            if (!RotationFits(slotId, wanted))
+            if (!(freeStacks.ContainsKey(slotId) ? RotationFits(slotId,wanted)
+                : IsEmbedded ? EmbeddedEditFits(slotId, wanted, null, byPlayer) : RotationFits(slotId, wanted)))
             {
                 (Api as ICoreClientAPI)?.TriggerIngameError(this, "norotateroom",
                     Lang.Get("universaldisplaylib:rotate-noroom"));
@@ -2394,6 +2746,7 @@ namespace UniversalDisplayLib
             }
 
             customRotationDegBySlot[slotId] = wanted;
+            if (IsEmbedded) RefreshEmbeddedEffects();
 
             // The selection boxes are derived from item state, so they have to go with the
             // meshes. Without this the client kept a stale set from the moment of rotating
@@ -2682,6 +3035,15 @@ namespace UniversalDisplayLib
         private bool EnsureAnimatorCurrent()
         {
             if (capi == null || Block == null) return false;
+
+            // NOTHING TO OPEN, NO ANIMATOR (code check 2026-10-22): shelves, piles and tables used to get one too - a
+            // second copy of the model on the GPU and 4-5 renderers called every frame, never drawing anything.
+            if (!Animates)
+            {
+                if (animUtil != null) { animUtil.Dispose(); animUtil = null; _animatorShapeKey = null; _animatorAngleRad = float.NaN; }
+                return false;
+            }
+
             if (!MaterialsReady) return false;
 
             // Keyed on the animation shape, NOT the block id. Toggling a pane runs
@@ -2704,6 +3066,25 @@ namespace UniversalDisplayLib
         }
 
         private bool _snapNextAnimationUpdate;
+
+        /// <summary>Whether this block has a pane with open and close animations - the only thing the animator is for.
+        /// Worked out once per block id: a wrench swap can change it.</summary>
+        private bool Animates
+        {
+            get
+            {
+                if (_animatesBlockId != Block.Id)
+                {
+                    FrameBoxGroup[] groups = SurfaceBehavior?.FrameBoxGroups;
+                    _animates = groups != null && groups.Any(g => !string.IsNullOrEmpty(g.AnimOpen) && !string.IsNullOrEmpty(g.AnimClose));
+                    _animatesBlockId = Block.Id;
+                }
+                return _animates;
+            }
+        }
+
+        private int _animatesBlockId = -1;
+        private bool _animates;
 
         private void InitializeAnimator()
         {
@@ -2950,7 +3331,7 @@ namespace UniversalDisplayLib
                 _allBoxes = null;
             }
 
-            if (blockMesh != null)
+            if (blockMesh != null && !IsEmbedded)
             {
                 float[] blockMatrix = new Matrixf()
                     .Translate(0.5f, 0f, 0.5f)
@@ -2963,26 +3344,6 @@ namespace UniversalDisplayLib
             return true;
         }
 
-        /// <summary>
-        /// Transform for one stored item, or null if the slot cannot be placed yet.
-        ///
-        /// Split out of GenerateMeshes so OnTesselation can recompute a missing entry
-        /// on the spot. Any transient failure during generation — an unresolved stack,
-        /// a surface not parsed yet, a throw out of the block mesh build — used to
-        /// leave TfMatrices short an entry, and the render loop skipped that item
-        /// outright until something else invalidated the meshes. That is the item
-        /// vanishing on the first interaction after a world load.
-        /// </summary>
-        /// <summary>
-        /// The mesh and transform the placement ghost should draw, or false if there is
-        /// nothing to draw. Thin wrapper on purpose: the ghost must go through the SAME
-        /// mesh builder and the SAME matrix as the real placement, or it will show the
-        /// player something they are not going to get.
-        ///
-        /// <paramref name="rotDeg"/> is the player's PENDING angle rather than the stored
-        /// one — nothing is stored yet — which is the only reason BuildSlotMatrix takes an
-        /// override at all.
-        /// </summary>
         /// <summary>
         /// Where an item aimed at an OCCUPIED slot would actually land if stacked, the angle it
         /// would inherit, and whether it would be allowed at all.
@@ -2998,8 +3359,16 @@ namespace UniversalDisplayLib
         /// is not compounded onto the copy above it.
         /// </summary>
         public bool TryResolveStackTarget(DisplaySlotId aimed, DisplayableAttributes heldAttr,
-                                          out DisplaySlotId target, out float rotDeg, out bool allowed)
+                                         out DisplaySlotId target, out float rotDeg, out bool allowed)
+            => TryResolveStackTargetOn(aimed, heldAttr, out target, out rotDeg, out allowed, null, null);
+
+        public bool TryResolveStackTargetOn(DisplaySlotId aimed, DisplayableAttributes heldAttr,
+                                          out DisplaySlotId target, out float rotDeg, out bool allowed,
+                                          BlockSelection selection = null, IPlayer player = null)
         {
+            if (FreeStackingEnabled && selection != null)
+                return TryResolveFreeStack(aimed, heldAttr, selection, player ?? (Api as ICoreClientAPI)?.World.Player,
+                    out target, out rotDeg, out allowed);
             target = aimed; rotDeg = 0f; allowed = false;
 
             DisplaySurface surface = SurfaceBehavior?.GetSurface(aimed?.SurfaceIndex ?? -1);
@@ -3025,14 +3394,15 @@ namespace UniversalDisplayLib
             }
 
             target = cursor;
-            rotDeg = ChosenRotationDeg(aimed.Encoded);
+            rotDeg = PlacementRotation.HasPending(Api, null) ? PlacementRotation.For(Api, null) : ChosenRotationDeg(aimed.Encoded);
 
             // Red rather than absent when it will not go: an item that does not stack, or a
             // pile that has run out of headroom, is exactly what the ghost exists to tell you.
             // Identical test to TryStack's, through the same StackBaseY, so the ghost cannot
             // redden while the placement succeeds or the other way about.
             allowed = heldAttr.Behavior == EnumDisplayableBehavior.Stacking
-                      && StackBaseY(cursor, surface, heldAttr) < surface.Size.Height;
+                      && (UnboundedStacking || StackBaseY(cursor, surface, heldAttr) < surface.Size.Height)
+                      && StackTargetFits(cursor, surface, heldAttr, rotDeg);
             return true;
         }
 
@@ -3088,6 +3458,16 @@ namespace UniversalDisplayLib
             return TryBuildGhost(slotId, heldSlot, dattr, rotDeg, out MeshData mesh, out float[] matrix) ? MeshBounds(mesh, matrix) : null;
         }
 
+        /// <summary>
+        /// The mesh and transform the placement ghost should draw, or false if there is
+        /// nothing to draw. Thin wrapper on purpose: the ghost must go through the SAME
+        /// mesh builder and the SAME matrix as the real placement, or it will show the
+        /// player something they are not going to get.
+        ///
+        /// <paramref name="rotDeg"/> is the player's PENDING angle rather than the stored
+        /// one — nothing is stored yet — which is the only reason BuildSlotMatrix takes an
+        /// override at all.
+        /// </summary>
         public bool TryBuildGhost(string slotId, ItemSlot heldSlot, DisplayableAttributes dattr,
                                   float rotDeg, out MeshData mesh, out float[] matrix)
         {
@@ -3106,6 +3486,16 @@ namespace UniversalDisplayLib
             return mesh != null;
         }
 
+        /// <summary>
+        /// Transform for one stored item, or null if the slot cannot be placed yet.
+        ///
+        /// Split out of GenerateMeshes so OnTesselation can recompute a missing entry
+        /// on the spot. Any transient failure during generation — an unresolved stack,
+        /// a surface not parsed yet, a throw out of the block mesh build — used to
+        /// leave TfMatrices short an entry, and the render loop skipped that item
+        /// outright until something else invalidated the meshes. That is the item
+        /// vanishing on the first interaction after a world load.
+        /// </summary>
         private float[] BuildSlotMatrix(string slotId, ItemSlot slot, out DisplayableAttributes dattr,
                                         float? rotationOverrideDeg = null,
                                         KeyValuePair<string, ItemSlot>[] slots = null,
@@ -3155,6 +3545,9 @@ namespace UniversalDisplayLib
             // also cost more than it gave, since a stack of items at slightly different
             // heights shows gaps where they fall short and z-fights where they overlap.
             // Only the resting angle is random now.
+            // The item's size (the Resize key, lib 1.4.0) round its own bottom centre, after its turn - dattr.Size is
+            // already the sized one, so the centring above matches.
+            float scale = ItemScale.For(slot);
             return new Matrixf()
                 .Translate(0.5f, 0f, 0.5f)
                 .RotateYDeg(Block.Shape?.rotateY ?? 0f)
@@ -3165,6 +3558,7 @@ namespace UniversalDisplayLib
                     (surfacePos.Z + loc.Z + offset.Z) / 16f)
                 .Translate(-0.5f + dattr.Size.Width / 2f / 16f, 0f, -0.5f + dattr.Size.Length / 2f / 16f)
                 .RotateY(GameMath.DEG2RAD * rotDeg)
+                .Scale(scale, scale, scale)
                 .Translate(-0.5f, 0f, -0.5f)
                 .Values;
         }
@@ -3614,6 +4008,8 @@ namespace UniversalDisplayLib
 
         public override void FromTreeAttributes(ITreeAttribute tree, IWorldAccessor worldForResolving)
         {
+            ReadFreeStacks(tree);
+            EmbeddedFloorVoxels = tree.GetFloat("embeddedFloor");
             base.FromTreeAttributes(tree, worldForResolving);
 
             bool[] previousPanes = paneStates != null ? (bool[])paneStates.Clone() : null;
@@ -3704,8 +4100,12 @@ namespace UniversalDisplayLib
             InvalidateBoxes();
             MarkMeshesDirty();
 
-            if (worldForResolving.Side == EnumAppSide.Client && Api != null)
+            if (IsEmbedded) { QueueEmbeddedMeshes(); QueueEmbeddedEffects(); }
+            if (!IsEmbedded && worldForResolving.Side == EnumAppSide.Client && Api != null)
             {
+                // Publish after the authoritative inventory has been read, then queue
+                // relight with the light-aware getter already ready for the worker.
+                RefreshStoredLight();
                 bool reinitialised = EnsureAnimatorCurrent();
 
                 bool panesChanged = previousPanes == null || paneStates == null || previousPanes.Length != paneStates.Length;
@@ -3738,6 +4138,8 @@ namespace UniversalDisplayLib
         public override void ToTreeAttributes(ITreeAttribute tree)
         {
             base.ToTreeAttributes(tree);
+            WriteFreeStacks(tree);
+            if (IsEmbedded) tree.SetFloat("embeddedFloor", EmbeddedFloorVoxels);
             tree.SetFloat("meshAngleRad", MeshAngleRad);
 
             if (paneStates != null && paneStates.Length > 0)
@@ -3837,6 +4239,11 @@ namespace UniversalDisplayLib
             if (slotId != null && inv[slotId] is { Empty: false } slot)
             {
                 AppendStoredItemInfo(dsc, slot, perishRate);
+
+                // its display size, when it has been resized (Calm 2026-10-21: "so we know the size of it")
+                float scale = ItemScale.Of(slot.Itemstack);
+                if (Math.Abs(scale - 1f) > 0.0001f)
+                    dsc.AppendLine(Lang.Get("universaldisplaylib:item-scale", (int)Math.Round(scale * 100f)));
             }
         }
 
@@ -3937,6 +4344,7 @@ namespace UniversalDisplayLib
 
         void AutoBoxesMeasureTurned()
         {
+            if (IsEmbedded) return;
             if (Api == null || Block == null) return;
             Block measured = MeasuredBlock();
             var boxes = new List<(Cuboidf box, string id)>();
@@ -4028,6 +4436,13 @@ namespace UniversalDisplayLib
         /// its own; its own included) - what placing it needs free (the height detection: a tall window needs the space above).
         /// </summary>
         public static HashSet<(int x, int y, int z)> ShutCells(ICoreAPI api, Block block, float angle)
+            => ShutCells(api, block, angle, true);
+
+        /// <summary>
+        /// <paramref name="withSolidOnly"/> false leaves out the parts in no leaf and no Static group (collision only - the
+        /// sliding shutters' rails running along the wall): the spaces only those reach are not the window's body.
+        /// </summary>
+        static HashSet<(int x, int y, int z)> ShutCells(ICoreAPI api, Block block, float angle, bool withSolidOnly)
         {
             var cells = new HashSet<(int x, int y, int z)> { (0, 0, 0) };
             Block measured = MeasuredBlockOf(block);
@@ -4035,7 +4450,7 @@ namespace UniversalDisplayLib
             Reach.PaneBoxes panes = Reach.PaneBoxes.For(api, measured?.Shape, groups.Select(g => g.AnimOpen ?? "").ToArray());
             var boxes = panes == null
                 ? new[] { AutoBoxesMeasure.FromModel(api, measured, false) }
-                : panes.Fixed.Concat(panes.Solid).Concat(panes.Shut);
+                : panes.Fixed.Concat(withSolidOnly ? panes.Solid : Array.Empty<Cuboidf>()).Concat(panes.Shut);
             foreach (Cuboidf box in boxes)
             {
                 if (box == null) continue;
@@ -4058,10 +4473,44 @@ namespace UniversalDisplayLib
         }
         private (int blockId, float angle, HashSet<(int x, int y, int z)> cells) ownCells;
 
-        /// <summary>Server: the fillers in the window's own spaces take its light - dark while its block absorbs light (a shut External Shutter), clear otherwise.</summary>
+        /// <summary>The window's own spaces other than its block (a tall window's upper blocks) - they hold a filler even when empty.</summary>
+        IEnumerable<(int, int, int)> OwnSpaces()
+        {
+            if (Api == null || Block == null) return Array.Empty<(int, int, int)>();
+            IsPartOfOwner(Pos);   // fills the cache
+            return ownCells.cells.Where(c => c != (0, 0, 0)).Select(c => (c.x, c.y, c.z));
+        }
+
+        /// <summary>
+        /// Where a shut light-blocking window darkens its fillers: its own spaces that its leaves or Static parts fill, not
+        /// those only trim reaches (Calm, 2026-10-20: the sliding shutters' rails shaded the outside wall beside them).
+        /// </summary>
+        public bool TakesLightAt(BlockPos cell)
+        {
+            if (Api == null || Block == null) return false;
+            var cache = lightCells;
+            if (cache.blockId != Block.Id || cache.angle != MeshAngleRad || cache.cells == null)
+                lightCells = cache = (Block.Id, MeshAngleRad, ShutCells(Api, Block, MeshAngleRad, false));
+            return cache.cells.Contains((cell.X - Pos.X, cell.Y - Pos.Y, cell.Z - Pos.Z));
+        }
+        private (int blockId, float angle, HashSet<(int x, int y, int z)> cells) lightCells;
+
+        /// <summary>
+        /// Server: the fillers in the window's own spaces take its light - dark while its block absorbs light (a shut External
+        /// Shutter), clear otherwise. Done a moment after the change, once Sync's fillers are in place (tried 2026-10-20 for a
+        /// shut 3 high that stayed lit behind; that was cured by keeping the own-space fillers - see SyncFillers - and this
+        /// was kept as tested with it).
+        /// </summary>
         public void MatchFillerLight()
         {
-            if (Api?.Side == EnumAppSide.Server) PartOfOwnerLight.Match(Api.World, Pos, this, autoHeld);
+            if (Api?.Side != EnumAppSide.Server) return;
+            ICoreAPI api = Api;
+            BlockPos pos = Pos;
+            api.Event.RegisterCallback(_ =>
+            {
+                if (api.World.BlockAccessor.GetBlockEntity(pos) is BEUniversalDisplay be && be.Api != null)
+                    PartOfOwnerLight.Match(api.World, pos, be, be.autoHeld);
+            }, 50);
         }
 
         /// <summary>Every other block this window's boxes reach right now (outline or solid) - where its fillers go.</summary>
@@ -4081,13 +4530,23 @@ namespace UniversalDisplayLib
             if (Api?.Side == EnumAppSide.Server) SyncFillers();
         }
 
+        readonly ConcurrentDictionary<(int, int, int), DisplayBoxCache> fillerSelectionCache = new();
+        readonly ConcurrentDictionary<(int, int, int), DisplayBoxCache> fillerCollisionCache = new();
+
         public Cuboidf[] AutoBoxesAt(BlockPos cell)
         {
             var key = (cell.X - Pos.X, cell.Y - Pos.Y, cell.Z - Pos.Z);
             Cuboidf[] own = autoLayout.Selection.TryGetValue(key, out var boxes) ? boxes : [];
             if (key == (0, 0, 0)) return own;
             Cuboidf[] items = ItemBoxesIn(key);
-            return items.Length == 0 ? own : own.Length == 0 ? items : own.Concat(items).ToArray();
+            // the placement pads of a surface in that space (2026-10-17) - after the layout, before the items, the same
+            // order on both sides so a click's index means the same box
+            // PADS FIRST (2026-10-17, Calm: the top shelf "shows right on the edge but no area on the shelf") - the layout's
+            // whole frame box tied with the pad at the shelf top and won, as in the own block before pads went first
+            Cuboidf[] pads = _padCells.TryGetValue(key, out var foundPads) ? foundPads : Array.Empty<Cuboidf>();
+            Vec3f shift = Api == null ? null : SidingShift.At(Pos, Block);
+            return fillerSelectionCache.GetOrAdd(key, _ => new DisplayBoxCache())
+                .Get(own, pads, items, shift?.X ?? 0f, shift?.Z ?? 0f);
         }
 
         // ── Items reaching past the block (2026-10-10, review point 2: "aiming at higher stacked crocks selects the ground
@@ -4100,6 +4559,7 @@ namespace UniversalDisplayLib
 
         /// <summary>Placed items' boxes in the other spaces they reach (offset -> whole boxes, ids kept). Swapped in whole.</summary>
         volatile Dictionary<(int, int, int), Cuboidf[]> _itemCells = new();
+        volatile Dictionary<(int, int, int), Cuboidf[]> _itemCollisionCells = new();
         /// <summary>The spaces the fillers were last synced for (server).</summary>
         HashSet<(int, int, int)> _itemCellsSynced = new();
         [ThreadStatic] static int regenDepth;
@@ -4107,6 +4567,9 @@ namespace UniversalDisplayLib
 
         /// <summary>Server: every loaded window - told when an item's measured size arrives (its boxes may now reach further).</summary>
         static readonly ConcurrentDictionary<BEUniversalDisplay, byte> LiveServerInstances = new();
+
+        /// <summary>Server: every display block entity in loaded chunks (Universal Ground Storage's /ugs revert walks its piles).</summary>
+        public static IEnumerable<BEUniversalDisplay> LoadedOnServer => LiveServerInstances.Keys;
 
         Cuboidf[] ItemBoxesIn((int, int, int) key)
         {
@@ -4131,23 +4594,67 @@ namespace UniversalDisplayLib
             Api != null && inv?.Api != null
             && (capi == null || Environment.CurrentManagedThreadId == RuntimeEnv.MainThreadId);
 
+        /// <summary>
+        /// PADS IN THE SPACES ABOVE (2026-10-17, Calm: a 2-high shelf "combining the 2 shelves in a recipe" - "would make
+        /// them look better than stacking"). A surface the model puts in another space (an upper shelf of a 2-high stand)
+        /// had its placement pads only in this block's own box list, and the game tests a space's boxes only when the aim
+        /// passes through that space - so from the front the upper shelf could not be placed on. Each such pad is now also
+        /// handed, whole and with its own id, to the space it is in, exactly as items reaching up are: the filler there
+        /// outlines it and sends the click down here with the pad's id, so placing, the ghost and the wheel all work.
+        /// </summary>
+        volatile Dictionary<(int, int, int), Cuboidf[]> _padCells = new();
+
+        void SetPadCells(List<CuboidfWithId> pads)
+        {
+            var cells = new Dictionary<(int, int, int), List<Cuboidf>>();
+            foreach (CuboidfWithId pad in pads)
+                // a shelf right on the join (pad top = the space's floor) belongs to the space above too: cut with its top
+                // nudged up so that space gets it
+                foreach (var cell in AutoBoxes.Cut(new Cuboidf(Ordered(pad).X1, Ordered(pad).Y1, Ordered(pad).Z1, Ordered(pad).X2, Ordered(pad).Y2 + 0.01f, Ordered(pad).Z2)).Keys)
+                {
+                    if (cell == (0, 0, 0)) continue;
+                    // ...but only where the model itself goes on up (a tall stand). The top shelf of every 1-high piece
+                    // sits on the join too, and handed up it put a filler above every stand (Calm 2026-10-17: a second
+                    // box on the top shelf in a siding wall, and lag)
+                    if (Ordered(pad).Y1 < 1f && !autoLayout.Selection.ContainsKey(cell) && !autoLayout.Collision.ContainsKey(cell)) continue;
+                    if (!cells.TryGetValue(cell, out var list)) cells[cell] = list = new List<Cuboidf>();
+                    list.Add(new CuboidfWithId(AutoBoxes.Whole(Ordered(pad), cell)) { Id = pad.Id });
+                }
+            bool changed = !_padCells.Keys.ToHashSet().SetEquals(cells.Keys);
+            _padCells = cells.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
+            if (changed && Api?.Side == EnumAppSide.Server) ScheduleItemFillerCheck();
+        }
+
         void SetItemCells(List<(Cuboidf footprint, Cuboidf outline)> items)
         {
             var cells = new Dictionary<(int, int, int), List<Cuboidf>>();
+            var collisions = new Dictionary<(int, int, int), List<Cuboidf>>();
             foreach (var (footprint, outline) in items)
             {
                 string id = (outline as CuboidfWithId)?.Id ?? (footprint as CuboidfWithId)?.Id;
                 Cuboidf shown = Ordered(outline);
-                foreach (var cell in AutoBoxes.Cut(Ordered(footprint)).Keys)
+                foreach (var (cell, piece) in AutoBoxes.Cut(Ordered(footprint)))
                 {
+                    if (!collisions.TryGetValue(cell, out var physical)) collisions[cell] = physical = new List<Cuboidf>();
+                    physical.Add(piece);
                     if (cell == (0, 0, 0)) continue;
                     if (!cells.TryGetValue(cell, out var list)) cells[cell] = list = new List<Cuboidf>();
                     list.Add(new CuboidfWithId(AutoBoxes.Whole(shown, cell)) { Id = id });
                 }
             }
+            var physicalBefore = _itemCollisionCells;
+            var physicalAfter = new Dictionary<(int,int,int),Cuboidf[]>();
+            foreach (var entry in collisions)
+            {
+                var next = entry.Value.ToArray();
+                if (physicalBefore.TryGetValue(entry.Key, out var old) && SameItemCellBoxes(old,next)) next = old;
+                physicalAfter[entry.Key] = next;
+            }
+            _itemCollisionCells = physicalAfter;
             var before = _itemCells;
             var after = cells.ToDictionary(kv => kv.Key, kv => kv.Value.ToArray());
             _itemCells = after;
+            PublishStorageReach(before.Keys, after.Keys);
             bool cellsChanged = !before.Keys.ToHashSet().SetEquals(after.Keys);
             // Hosts cache copies of these boxes. A stack can grow, shrink or move while
             // remaining in the same cell, so compare the boxes as well as cell membership.
@@ -4155,11 +4662,13 @@ namespace UniversalDisplayLib
             // each other's guest lists and would otherwise keep invalidating one another.
             IBlockAccessor ba = Api?.World?.BlockAccessor;
             if (ba != null && Pos != null)
-                foreach (var (x, y, z) in before.Keys.Union(after.Keys))
+                foreach (var (x, y, z) in before.Keys.Union(after.Keys).Union(physicalBefore.Keys).Union(physicalAfter.Keys))
                 {
                     before.TryGetValue((x, y, z), out var oldBoxes);
                     after.TryGetValue((x, y, z), out var newBoxes);
-                    if (SameItemCellBoxes(oldBoxes, newBoxes)) continue;
+                    physicalBefore.TryGetValue((x,y,z),out var oldPhysical);
+                    physicalAfter.TryGetValue((x,y,z),out var newPhysical);
+                    if (SameItemCellBoxes(oldBoxes, newBoxes) && SameItemCellBoxes(oldPhysical,newPhysical)) continue;
                     if (ba.GetBlockEntity(Pos.AddCopy(x, y, z)) is BEUniversalDisplay host && host != this) host.GuestsChanged();
                 }
             if (cellsChanged && Api?.Side == EnumAppSide.Server) ScheduleItemFillerCheck();
@@ -4185,9 +4694,13 @@ namespace UniversalDisplayLib
             if (Api?.Side != EnumAppSide.Server) return;
             GetSelectionBoxes();
             var itemCells = _itemCells.Keys.ToHashSet();
-            var wanted = autoLayout.Selection.Keys.Union(autoLayout.Collision.Keys).Union(itemCells).ToList();
+            // + the window's own spaces, open or shut (Calm, 2026-10-21): a 3 high shutter folded open has nothing in its middle
+            // block, and a filler placed there again on shutting did not take the light out of the room behind - only facing
+            // east, where rounding kept one. Kept always, a shut is only ever a clear-to-dark swap on a filler already there.
+            var wanted = autoLayout.Selection.Keys.Union(autoLayout.Collision.Keys).Union(itemCells).Union(_padCells.Keys)
+                .Union(OwnSpaces()).ToList();
             autoHeld = AutoBoxes.Sync(Api.World, Pos, wanted, autoHeld);
-            _itemCellsSynced = itemCells;
+            _itemCellsSynced = itemCells.Union(_padCells.Keys).ToHashSet();
             MatchFillerLight();
         }
 
@@ -4201,12 +4714,20 @@ namespace UniversalDisplayLib
                 _fillerCheckQueued = false;
                 if (_removed) return;
                 GetSelectionBoxes();
-                if (!_itemCells.Keys.ToHashSet().SetEquals(_itemCellsSynced)) SyncFillers();
+                if (!_itemCells.Keys.Union(_padCells.Keys).ToHashSet().SetEquals(_itemCellsSynced)) SyncFillers();
             }, 50);
         }
 
         public override void MarkDirty(bool redrawOnClient = false, IPlayer skipPlayer = null)
         {
+            if (IsEmbedded)
+            {
+                if (redrawOnClient) { meshesGenerated = false; InvalidateBoxes(); }
+                EmbeddedHost.MarkDirty(redrawOnClient, skipPlayer);
+                ScheduleItemFillerCheck();
+                QueueEmbeddedMeshes();
+                return;
+            }
             base.MarkDirty(redrawOnClient, skipPlayer);
             if (Api?.Side == EnumAppSide.Server) ScheduleItemFillerCheck();
         }
@@ -4222,8 +4743,25 @@ namespace UniversalDisplayLib
             }, "universaldisplaylib-itemsizes");
         }
 
-        public Cuboidf[] AutoCollisionAt(BlockPos cell) =>
-            autoLayout.Collision.TryGetValue((cell.X - Pos.X, cell.Y - Pos.Y, cell.Z - Pos.Z), out var boxes) ? boxes : [];
+        // Physical footprint pieces, never client mesh outlines or placement pads.
+        public Cuboidf[] ItemCollisionAt(BlockPos cell)
+        {
+            if (!ItemCollision || cell == null || Pos == null) return Array.Empty<Cuboidf>();
+            if (regenDepth == 0 && CanRebuildBoxesHere()) GetSelectionBoxes();
+            var key = (cell.X - Pos.X, cell.Y - Pos.Y, cell.Z - Pos.Z);
+            return _itemCollisionCells.TryGetValue(key, out var pieces) ? pieces : Array.Empty<Cuboidf>();
+        }
+
+        public Cuboidf[] AutoCollisionAt(BlockPos cell)
+        {
+            var key = (cell.X - Pos.X, cell.Y - Pos.Y, cell.Z - Pos.Z);
+            Cuboidf[] items = ItemCollisionAt(cell);
+            Cuboidf[] boxes = autoLayout.Collision.TryGetValue(key, out var found) ? found : [];
+            Vec3f shift = key == (0,0,0) || Api == null ? null : SidingShift.At(Pos, Block);
+            if (items.Length == 0 && key == (0,0,0)) return boxes;
+            return fillerCollisionCache.GetOrAdd(key, _ => new DisplayBoxCache())
+                .Get(boxes, Array.Empty<Cuboidf>(), items, shift?.X ?? 0f, shift?.Z ?? 0f);
+        }
 
         // ── Guests (Calm, 2026-10-07: "I need all the parts to be clickable the shutter and the window and to have normal
         // window functions") ─────────────────────────────────────────────────
@@ -4243,24 +4781,27 @@ namespace UniversalDisplayLib
         /// <summary>The windows whose boxes reach into this block (beside it, or a tall one below or above).</summary>
         BEUniversalDisplay[] Guests()
         {
+            if (IsEmbedded) return Array.Empty<BEUniversalDisplay>();
             BEUniversalDisplay[] found = guests;
             if (found != null) return found;
             IBlockAccessor ba = Api?.World?.BlockAccessor;
             if (ba == null || Pos == null) return Array.Empty<BEUniversalDisplay>();
             var list = new List<BEUniversalDisplay>();
-            for (int dy = -2; dy <= 2; dy++)
+            foreach (var other in StorageGuestsAt(ba, Pos))
+                if (other != this && !other._removed) list.Add(other);
+            for (int dy = -3; dy <= 3; dy++)
             for (int dx = -1; dx <= 1; dx++)
             for (int dz = -1; dz <= 1; dz++)
             {
                 if (dx == 0 && dy == 0 && dz == 0) continue;
-                if (ba.GetBlockEntity(Pos.AddCopy(dx, dy, dz)) is not BEUniversalDisplay other || other._removed) continue;
+                if (At(ba, Pos.AddCopy(dx, dy, dz)) is not { } other || other._removed) continue;
                 // ITS PLACED ITEMS' BOXES UP TO DATE FIRST (2026-10-11, Calm: a stand's top-shelf items reaching into a shelf
                 // standing above could not be taken). A leaf's boxes exist from load, but the item boxes a window hands to the
                 // spaces above it are only worked out when that window rebuilds its own boxes - so this block could look
                 // before they existed, find nothing and keep that answer (and on the server the box numbers then disagree).
                 // One level deep only: the window's rebuild looks round in turn, and must not start this one again.
                 if (regenDepth < 2 && other.CanRebuildBoxesHere()) other.GetSelectionBoxes();
-                if (other.AutoBoxesAt(Pos).Length > 0 || other.AutoCollisionAt(Pos).Length > 0) list.Add(other);
+                if (!list.Contains(other) && (other.AutoBoxesAt(Pos).Length > 0 || other.AutoCollisionAt(Pos).Length > 0)) list.Add(other);
             }
             found = list.ToArray();
             guests = found;
@@ -4326,7 +4867,27 @@ namespace UniversalDisplayLib
         public static BlockSelection WindowSelection(IBlockAccessor ba, BlockSelection sel)
         {
             sel = BlockAutoBoxesFiller.ToOwner(ba, sel);
-            return GuestSelection(sel, null, out BlockSelection forwarded) ? forwarded : sel;
+            // A selection from a block that is not ours carries only an index: read the id from that block's boxes, so a
+            // guest box another mod put on a foreign block (Universal Ground Storage on a chiselled block) forwards too.
+            string id = sel?.SelectionBoxId;
+            if (id == null && sel?.Position != null && sel.SelectionBoxIndex >= 0)
+            {
+                Cuboidf[] boxes = ba.GetBlock(sel.Position)?.GetSelectionBoxes(ba, sel.Position);
+                if (boxes != null && sel.SelectionBoxIndex < boxes.Length) id = (boxes[sel.SelectionBoxIndex] as CuboidfWithId)?.Id;
+            }
+            if (GuestSelection(sel, id, out BlockSelection guest))
+            {
+                sel = guest;
+                id = guest.SelectionBoxId;
+            }
+            if (id?.StartsWith(EmbeddedBoxPrefix, StringComparison.Ordinal) == true)
+            {
+                var embedded = sel.Clone();
+                embedded.SelectionBoxId = id.Substring(EmbeddedBoxPrefix.Length);
+                embedded.SelectionBoxIndex = 0;
+                return embedded;
+            }
+            return GuestSelection(sel, id, out BlockSelection forwarded) ? forwarded : sel;
         }
 
         /// <summary>The id of the box a selection of this block aims at - from the selection, or by its index here.</summary>

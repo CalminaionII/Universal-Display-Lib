@@ -74,6 +74,32 @@ namespace UniversalDisplayLib
         /// <summary>Drop every uploaded ghost mesh on the next frame - an edit changed how items look.</summary>
         public static void MarkStale() => staleGeneration++;
 
+        static BlockPos committedPosition;
+        static string committedSlot;
+        static long committedUntil;
+
+        internal static void PlacementCommitted(BlockPos position, string slot)
+        {
+            committedPosition = position?.Copy();
+            committedSlot = slot;
+            committedUntil = Environment.TickCount64 + 1000;
+        }
+
+        // The reset packet can arrive before the inventory/terrain update. Do not
+        // redraw that same placement at angle zero in between. A new stack level,
+        // another target, or the bounded timeout ends the handoff immediately.
+        internal static bool AwaitingPlacement(BlockPos position, string slot, long now)
+        {
+            if (committedPosition == null || committedSlot == null) return false;
+            if (now >= committedUntil || !committedPosition.Equals(position) || committedSlot != slot)
+            {
+                committedPosition = null;
+                committedSlot = null;
+                return false;
+            }
+            return true;
+        }
+
         public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
         {
             if (UniversalDisplayLibConfig.Current?.PlacementGhost != true) return;
@@ -120,14 +146,16 @@ namespace UniversalDisplayLib
             if (held == null || held.Empty) return;
 
             Block block = capi.World.BlockAccessor.GetBlock(blockSel.Position);
-            var bh = block?.GetBehavior<BlockBehaviorDisplaySurfaces>();
-            if (bh == null) return;
+            var bh = block?.GetBehavior<BlockBehaviorDisplaySurfaces>()
+                ?? BEUniversalDisplay.At(capi.World.BlockAccessor, blockSel.Position)?.SurfaceBehavior;
 
-            if (!bh.TryGetGhost(blockSel, held, out BEUniversalDisplay be, out DisplaySlotId loc,
-                                out DisplayableAttributes dattr, out float rotDeg, out bool fits))
-            {
-                return;
-            }
+            BEUniversalDisplay be; DisplaySlotId loc; DisplayableAttributes dattr; float rotDeg; bool fits;
+            BlockPos drawAt = blockSel.Position;
+            if (bh != null && bh.TryGetGhost(blockSel, held, out be, out loc, out dattr, out rotDeg, out fits)) { }
+            else if (!TryBareGhost(held, blockSel, out be, out loc, out dattr, out rotDeg, out fits)) return;
+            else drawAt = be.Pos;
+
+            if (AwaitingPlacement(be.Pos, loc.Encoded, Environment.TickCount64)) return;
 
             // loc.Encoded, NOT blockSel.SelectionBoxId — when stacking they differ, and the
             // target is the one the item is going to occupy.
@@ -169,7 +197,32 @@ namespace UniversalDisplayLib
 
             if (meshRef == null || meshRef.Disposed) return;
 
-            Draw(blockSel.Position, slotMatrix, meshRef, fits);
+            Draw(drawAt, slotMatrix, meshRef, fits);
+        }
+
+        /// <summary>
+        /// A ghost where no display block exists yet. Another mod (Universal Ground Storage) answers "would an item go
+        /// down here, and on what": a phantom block entity (BEUniversalDisplay.Phantom) where the block would be, and a
+        /// selection naming the pad under the aim. The first source that answers wins.
+        /// </summary>
+        public delegate bool BareGhostSource(ICoreClientAPI capi, ItemSlot held, BlockSelection aimed,
+                                             out BEUniversalDisplay phantom, out BlockSelection onPhantom);
+
+        public static readonly List<BareGhostSource> BareGhostSources = new List<BareGhostSource>();
+
+        private bool TryBareGhost(ItemSlot held, BlockSelection aimed, out BEUniversalDisplay be, out DisplaySlotId loc,
+                                  out DisplayableAttributes dattr, out float rotDeg, out bool fits)
+        {
+            be = null; loc = null; dattr = null; rotDeg = 0f; fits = false;
+            foreach (BareGhostSource source in BareGhostSources)
+            {
+                if (!source(capi, held, aimed, out BEUniversalDisplay phantom, out BlockSelection onPhantom) || phantom == null) continue;
+                var pbh = phantom.SurfaceBehavior;
+                if (pbh == null || !pbh.TryGetGhostOn(phantom, onPhantom, held, out loc, out dattr, out rotDeg, out fits)) continue;
+                be = phantom;
+                return true;
+            }
+            return false;
         }
 
         /// <summary>
@@ -232,7 +285,7 @@ namespace UniversalDisplayLib
                 // this path and never loses its multi-texture split.
                 try
                 {
-                    MeshData flattened = meshData.Clone();
+                    MeshData flattened = Uploadable(meshData).Clone();
                     flattened.TextureIds = new[]
                     {
                         meshData.TextureIds != null && meshData.TextureIds.Length > 0
@@ -330,6 +383,7 @@ namespace UniversalDisplayLib
         /// </summary>
         private MeshData Uploadable(MeshData meshData)
         {
+            meshData = GhostMeshUpload.Prepare(meshData);
             int idCount = meshData.TextureIds?.Length ?? 0;
 
             // Already fine: one id short-circuits, and several ids WITH the per-face map
@@ -430,11 +484,13 @@ namespace UniversalDisplayLib
                 // 0.05 discards them. Restored in the finally.
                 prog.AlphaTest = GhostAlphaTest;
 
+                // VS Siding moves a block in a wall's space off the panel - the ghost follows (SidingShift)
+                Vec3f siding = SidingShift.At(pos, capi.World.BlockAccessor.GetBlock(pos)) ?? new Vec3f();
                 prog.ModelMatrix = new Matrixf()
                     .Translate(
-                        (float)(pos.X - camPos.X),
+                        (float)(pos.X - camPos.X) + siding.X,
                         (float)(pos.Y - camPos.Y),
-                        (float)(pos.Z - camPos.Z))
+                        (float)(pos.Z - camPos.Z) + siding.Z)
                     .Mul(slotMatrix)
                     .Values;
 
@@ -460,7 +516,11 @@ namespace UniversalDisplayLib
                 // mesh's textures itself, so setting it by hand was redundant, and reaching
                 // into BlockTextureAtlas.AtlasTextures[0] to do it was a throw waiting to
                 // happen inside the shader-bound window above.
-                rpi.RenderMultiTextureMesh(meshRef, "tex");
+                // Chunk-rendered plants are visible from both sides. The standalone
+                // standard-shader ghost must also draw the backs of their flat faces.
+                rpi.GlDisableCullFace();
+                try { rpi.RenderMultiTextureMesh(meshRef, "tex"); }
+                finally { rpi.GlEnableCullFace(); }
             }
             finally
             {
@@ -486,6 +546,8 @@ namespace UniversalDisplayLib
 
         public void Dispose()
         {
+            committedPosition = null;
+            committedSlot = null;
             foreach (MultiTextureMeshRef meshRef in uploaded.Values)
             {
                 if (meshRef != null && !meshRef.Disposed) meshRef.Dispose();

@@ -71,8 +71,8 @@ namespace UniversalDisplayLib
 
         // ====================== Placement height ======================
         [Category("Placement Height")]
-        [Display(Name = "Height Comment", Description = "Sneak + mouse wheel raises or lowers an item. Step in voxels (0.05 to 4), and how far it may move (1 to 16)")]
-        public string HeightComment { get; set; } = "Sneak + mouse wheel raises or lowers an item. Step in voxels (0.05 to 4), and how far it may move (1 to 16)";
+        [Display(Name = "Height Comment", Description = "The Raise/lower display item key (Controls, default Left Shift) + mouse wheel raises or lowers an item. Step in voxels (0.05 to 4), and how far it may move (1 to 16)")]
+        public string HeightComment { get; set; } = "The Raise/lower display item key (Controls, default Left Shift) + mouse wheel raises or lowers an item. Step in voxels (0.05 to 4), and how far it may move (1 to 16)";
 
         /// <summary>
         /// Voxels per wheel notch. A quarter voxel by default: items land on the right
@@ -94,6 +94,31 @@ namespace UniversalDisplayLib
         [Display(Name = "Height Limit Voxels", Description = "How far up or down an item may be nudged from where it would sit (1 to 16)")]
         [Range(1, 16)]
         public float HeightLimitVoxels { get; set; } = 8f;
+
+        // ====================== Placement size (lib 1.4.0, the Resize key) ======================
+        [Category("Placement Size")]
+        [Display(Name = "Size Comment", Description = "Size Percent (1 to 50), smallest (10 to 100) and largest (100 to 400)")]
+        public string SizeComment { get; set; } = "Size Percent (1 to 50), smallest (10 to 100) and largest (100 to 400)";
+
+        /// <summary>Percent per wheel notch of the Resize key - the player's own, like the rotation step.</summary>
+        [Category("Placement Size")]
+        [Display(Name = "Percent", Description = "Size Percent (1 to 50)")]
+        [Range(1, 50)]
+        public int SizeStepPercent { get; set; } = 5;
+
+        /// <summary>
+        /// How small and how big an item may be made. A SERVER RULE like the height limit: the size is stored on the item
+        /// on the block and everyone sees it.
+        /// </summary>
+        [Category("Placement Size")]
+        [Display(Name = "Smallest Percent", Description = "The smallest an item may be made, in percent of its own size (10 to 100)")]
+        [Range(10, 100)]
+        public int SizeMinPercent { get; set; } = 25;
+
+        [Category("Placement Size")]
+        [Display(Name = "Largest Percent", Description = "The largest an item may be made, in percent of its own size (100 to 400)")]
+        [Range(100, 400)]
+        public int SizeMaxPercent { get; set; } = 200;
 
         // ====================== Placement rules ======================
         [Category("Placement Rules")]
@@ -327,6 +352,9 @@ namespace UniversalDisplayLib
             Current.RotationStepDegrees = Math.Clamp(Current.RotationStepDegrees, 5, 90);
             Current.HeightStepVoxels = Math.Clamp(Current.HeightStepVoxels, 0.05f, 4f);
             Current.HeightLimitVoxels = Math.Clamp(Current.HeightLimitVoxels, 1f, 16f);
+            Current.SizeStepPercent = Math.Clamp(Current.SizeStepPercent, 1, 50);
+            Current.SizeMinPercent = Math.Clamp(Current.SizeMinPercent, 10, 100);
+            Current.SizeMaxPercent = Math.Clamp(Current.SizeMaxPercent, 100, 400);
             Current.PlacementGhostOpacity = Math.Clamp(Current.PlacementGhostOpacity, 1, 10);
         }
 

@@ -13,6 +13,12 @@ namespace UniversalDisplayLib
     {
         /// <summary>Whether <paramref name="cell"/> (a world position) is one of the owner's own spaces.</summary>
         bool IsPartOfOwner(BlockPos cell);
+
+        /// <summary>
+        /// Whether that space takes the owner's light (goes dark with a shut External Shutter). Its own spaces by default;
+        /// a window narrows it to where its real body is, so thin trim reaching past it does not shade the space beside.
+        /// </summary>
+        bool TakesLightAt(BlockPos cell) => IsPartOfOwner(cell);
     }
 
     /// <summary>
@@ -42,7 +48,7 @@ namespace UniversalDisplayLib
                 var pos = owner.AddCopy(o.x, o.y, o.z);
                 Block now = world.BlockAccessor.GetBlock(pos);
                 if (now is not BlockAutoBoxesFiller) continue;
-                Block want = ownerDark && own.IsPartOfOwner(pos) ? dark : clear;
+                Block want = ownerDark && own.TakesLightAt(pos) ? dark : clear;
                 if (now.Id == want.Id) continue;
                 // relight on, as the window's own open/closed swap does (BEUniversalDisplay.SyncStateVariant); the
                 // exchange keeps the filler's block entity, so it keeps its owner

@@ -33,6 +33,10 @@ public interface IAutoBoxesOwner
 
 public static class AutoBoxes
 {
+    // UDL: embedded displays are behaviors on a vanilla host block entity.
+    internal static IAutoBoxesOwner OwnerAt(IBlockAccessor ba, BlockPos pos) =>
+        ba.GetBlockEntity(pos) as IAutoBoxesOwner ?? BEUniversalDisplay.At(ba, pos);
+
     /// <summary>The filler's block code (assets blocktypes/autoboxesfiller.json).</summary>
     public const string FillerCode = "universaldisplaylib:autoboxesfiller";   // CHANGE: your mod id (lowercase) before the colon
 
@@ -110,7 +114,7 @@ public static class AutoBoxes
             // UDL: another owner's filler already here (two shutters folding into one gap) - share the space; the window's
             // room check before opening made sure the two do not overlap here (Calm, 2026-10-07, "like we had before")
             if (ba.GetBlockEntity(pos) is BEAutoBoxesFiller shared && shared.Owner != null && !shared.Owner.Equals(owner)
-                && ba.GetBlockEntity(shared.Owner) is IAutoBoxesOwner)
+                && OwnerAt(ba, shared.Owner) != null)
             {
                 shared.AddSharer(owner);
                 result.Add(o);
@@ -137,39 +141,10 @@ public static class AutoBoxes
     public static System.Action<BlockPos, Cuboidf, bool> CarriedSeen;
 
     internal static bool Valid(IBlockAccessor ba, BlockPos owner) =>
-        ba.GetBlockEntity(owner) is IAutoBoxesOwner || (OwnerStillValid?.Invoke(ba, owner) ?? ba.GetBlockEntity(owner) != null);
+        OwnerAt(ba, owner) != null || (OwnerStillValid?.Invoke(ba, owner) ?? ba.GetBlockEntity(owner) != null);
 
-    /// <summary>
-    /// Server: fillers for an owner that cannot implement the interface. Each filler gets the whole
-    /// box to carry. The owner keeps no list - its fillers are found by looking round it (up to
-    /// <paramref name="reach"/> blocks), so a box that shrinks or moves leaves nothing behind.
-    /// </summary>
-    public static void SyncCarried(IWorldAccessor world, BlockPos owner, Cuboidf box, bool solid = false, int reach = 7)
-    {
-        var want = new HashSet<(int, int, int)>(Cut(box).Keys.Where(o => o != (0, 0, 0)));
-        var ba = world.BlockAccessor;
-        for (int x = -reach; x <= reach; x++)
-        for (int y = -reach; y <= reach; y++)
-        for (int z = -reach; z <= reach; z++)
-        {
-            if (want.Contains((x, y, z)) || (x, y, z) == (0, 0, 0)) continue;
-            Release(world, owner, (x, y, z));
-        }
-        Block filler = world.GetBlock(new AssetLocation(FillerCode));
-        if (filler == null) return;
-        foreach (var o in want)
-        {
-            var pos = owner.AddCopy(o.Item1, o.Item2, o.Item3);
-            if (ba.GetBlockEntity(pos) is BEAutoBoxesFiller mine && mine.Owner?.Equals(owner) == true)
-            {
-                mine.SetOwner(owner, box, solid);
-                continue;
-            }
-            if (ba.GetBlock(pos, BlockLayersAccess.Solid).Id != 0 || ba.GetBlock(pos, BlockLayersAccess.Fluid).Id != 0) continue;
-            ba.SetBlock(filler.Id, pos);
-            if (ba.GetBlockEntity(pos) is BEAutoBoxesFiller be) be.SetOwner(owner, box, solid);
-        }
-    }
+    // UDL: the kit's SyncCarried (fillers for an owner without the interface) is left out - every UDL owner implements
+    // it. Taxidermy uses it from its own copy; the master is Tools/AutoBoxes Kit. (code check 2026-10-22)
 
     /// <summary>Server: removes every filler this owner holds (the owner was broken or picked up).</summary>
     public static void ReleaseAll(IWorldAccessor world, BlockPos owner, IEnumerable<(int x, int y, int z)> held)
