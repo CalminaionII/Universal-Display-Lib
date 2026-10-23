@@ -340,6 +340,12 @@ namespace UniversalDisplayLib
             var system = Materials.MaterialsSystem.Instance;
             var world = api?.World;
             var result = new System.Collections.Generic.List<BlockDropItemStack>();
+
+            // ONLY WORK OUT A CYCLE THAT CAN BE SHOWN. With MaxHandbookCycle at 1 (no cycling, 2026-10-14) the cycle below
+            // can never hold more than the page's own set, so its result was always thrown away - but finding it scanned
+            // every grid recipe and every material, for each material version of each window the handbook lists. With 354
+            // mods that was 15.9 s over 1470 calls the first time the handbook opened (GitHub issue #2).
+            bool cycles = Materials.MaterialsSystem.MaxHandbookCycle > 1;
             foreach (var drop in drops)
             {
                 var collectible = drop?.ResolvedItemstack?.Collectible;
@@ -347,7 +353,7 @@ namespace UniversalDisplayLib
 
                 var sets = new System.Collections.Generic.List<System.Collections.Generic.IReadOnlyDictionary<string, string>> { types };
                 bool grouped = collectible.Attributes?["handbook"]?["groupBy"]?.Exists == true;
-                if (grouped && system != null && collectible is Block dropBlock && system.MaterialRecipeFor(world, collectible) != null)
+                if (cycles && grouped && system != null && collectible is Block dropBlock && system.MaterialRecipeFor(world, collectible) != null)
                 {
                     var cycle = system.CycleCombos(world, system.KindsFor(world, dropBlock), collectible.Code?.Domain, types, Materials.MaterialsSystem.MaxHandbookCycle);
                     if (cycle.Count > 1) sets = cycle.Select(c => (System.Collections.Generic.IReadOnlyDictionary<string, string>)c).ToList();

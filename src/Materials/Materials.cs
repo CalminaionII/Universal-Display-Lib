@@ -474,9 +474,22 @@ namespace UniversalDisplayLib.Materials
         public const int MaxHandbookCycle = 1;
 
         /// <summary>The material recipe (MaterialRecipes) that makes this block or item, or null.</summary>
-        public GridRecipe MaterialRecipeFor(IWorldAccessor world, CollectibleObject collectible) =>
-            collectible == null ? null : world?.GridRecipes?.FirstOrDefault(r =>
-                r?.Output?.ResolvedItemStack?.Collectible == collectible && MaterialRecipes.LettersOf(r).Count > 0);
+        /// <remarks>Kept per collectible: finding it walks every grid recipe in the game, which with a few hundred mods is tens
+        /// of thousands. Only kept once the recipes are there (they reach the client late) - the same rule as KindsFor.</remarks>
+        public GridRecipe MaterialRecipeFor(IWorldAccessor world, CollectibleObject collectible)
+        {
+            if (collectible == null) return null;
+            lock (recipeFor)
+            {
+                if (recipeFor.TryGetValue(collectible, out var known)) return known;
+                var recipe = world?.GridRecipes?.FirstOrDefault(r =>
+                    r?.Output?.ResolvedItemStack?.Collectible == collectible && MaterialRecipes.LettersOf(r).Count > 0);
+                if (recipe != null || (world?.GridRecipes?.Count ?? 0) > 0) recipeFor[collectible] = recipe;
+                return recipe;
+            }
+        }
+
+        private readonly Dictionary<CollectibleObject, GridRecipe> recipeFor = new();
 
         /// <summary>
         /// The materials to flip through, from <paramref name="start"/> (a stack's own): that first, then - when it MIXES them
@@ -1063,7 +1076,11 @@ namespace UniversalDisplayLib.Materials
             if (domain != null && byDomain.TryGetValue(domain, out var ownKinds) && ownKinds.TryGetValue(kind, out var own))
                 codes.AddRange(own.Keys.Where(c => c != "*"));
             if (kinds.TryGetValue(kind, out var shared))
-                foreach (var c in shared.Keys) if (c != "*" && !codes.Contains(c)) codes.Add(c);
+            {
+                // a set beside the list: List.Contains made this quadratic, and a modpack can list hundreds of woods
+                var have = new HashSet<string>(codes);
+                foreach (var c in shared.Keys) if (c != "*" && have.Add(c)) codes.Add(c);
+            }
             return codes;
         }
 
