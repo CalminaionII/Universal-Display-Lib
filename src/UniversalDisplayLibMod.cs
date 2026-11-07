@@ -17,15 +17,10 @@ using Vintagestory.Client.NoObf;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// **EVERY PACKET TYPE NEEDS [ProtoContract] - a lesson that cost a shipped release.**
-    /// LinkedOpenPacket (the tall-window pane sync, removed with the chain windows on 2026-10-05)
-    /// went out in 1.0.1 without it. On a dedicated server the first BroadcastPacket threw
-    /// "Type is not expected, and no contract can be inferred" out of
-    /// ProtoBuf.Meta.TypeModel.ThrowUnexpectedType, which the server treats as the player having
-    /// thrown an exception and KICKS THEM - opening any window disconnected the player.
-    /// Singleplayer never showed it: the integrated server does not put the packet through
-    /// protobuf on that path. Anything that only crosses a real network needs testing on a real
-    /// server, exactly as the render path needs testing in game.
+    /// EVERY PACKET TYPE NEEDS [ProtoContract]. On a dedicated server the first BroadcastPacket without it throws "Type
+    /// is not expected, and no contract can be inferred", which the server treats as the player having thrown an
+    /// exception and kicks them. Singleplayer never shows it: the integrated server does not put the packet through
+    /// protobuf on that path.
     /// </summary>
     internal static class PacketContractNote { }
 
@@ -33,9 +28,7 @@ namespace UniversalDisplayLib
     /// <summary>
     /// Tells the server the angle this player wants their next item placed at.
     ///
-    /// The ProtoContract is required, not decoration. protobuf-net cannot infer a contract
-    /// for a plain class and throws "Type is not expected, and no contract can be inferred"
-    /// the first time it is sent — which took the client down on the first key press.
+    /// The ProtoContract is required; see PacketContractNote.
     /// </summary>
     [ProtoContract]
     public class PlacementRotationPacket
@@ -52,17 +45,10 @@ namespace UniversalDisplayLib
     /// <summary>
     /// Turn an item that is ALREADY on a surface, from the mouse wheel.
     ///
-    /// A packet because this is server state: the wrench path reaches the same code through
-    /// OnBlockInteractStart, which the engine runs on both sides for us. A wheel notch is
-    /// purely a client input, so it has to be sent.
+    /// A packet because this is server state: the wrench path reaches the same code through OnBlockInteractStart, which
+    /// the engine runs on both sides for us. A wheel notch is purely a client input, so it has to be sent.
     ///
-    /// ProtoContract for the same reason PlacementRotationPacket needs one — protobuf-net
-    /// cannot infer a contract for a plain class and the first send throws "Type is not
-    /// expected".
-    ///
-    /// A comment here once claimed a broadcast packet "survives without one". **That was wrong
-    /// and it cost a shipped release** - every packet type needs the attribute; see
-    /// PacketContractNote.
+    /// ProtoContract required; see PacketContractNote.
     /// </summary>
     [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
     public class RotateStoredItemPacket
@@ -74,24 +60,43 @@ namespace UniversalDisplayLib
         /// <summary>
         /// The step this player wants, in degrees, from THEIR config.
         ///
-        /// SENT RATHER THAN LOOKED UP, so turning an item already on a shelf uses the same
-        /// step as turning the ghost before placing it. The server used to read its own
-        /// RotationStepDegrees here, which meant the two halves of one gesture moved by
-        /// different amounts whenever a player's config differed from the server's - and the
-        /// ghost, being client-side, always used the player's. Bounded server-side; see
-        /// TryRotateItem.
+        /// Sent rather than looked up, so turning an item already on a shelf uses the same step as turning the ghost
+        /// before placing it. Bounded server-side; see TryRotateItem.
         /// </summary>
         public float StepDeg;
     }
 
     /// <summary>
-    /// Tells the server the height nudge this player wants their next item placed with.
-    /// The height twin of <see cref="PlacementRotationPacket"/>, and needed for the same
-    /// reason: the placement interaction carries no room for extra data, so the value has
-    /// to have been sent already.
+    /// Server to client: "you may set up this floating spot - open the menu" (sneak + right-click on a levitating display).
+    /// The server sends it after the claim check, because a client cannot check claims (vsapi: TryAccess always says yes
+    /// on the client) - the same reason Taxidermy's adjust window waits for the server.
+    /// </summary>
+    [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
+    public class FloatMenuOpenPacket
+    {
+        public int X, Y, Z;
+        public string SpotId;
+    }
+
+    /// <summary>
+    /// Client to server: one floating spot's settings from the menu, or Reset for the base's own. Clamped server-side
+    /// (FloatTuning.Clamped) - every value comes from a client.
+    /// </summary>
+    [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
+    public class FloatTunePacket
+    {
+        public int X, Y, Z;
+        public string SpotId;
+        public float Rise, Tilt, Rot, Spin, Bob, BobSeconds, TiltForward, OffsetX, OffsetZ;
+        public bool Reset;
+    }
+
+    /// <summary>
+    /// Tells the server the height nudge this player wants their next item placed with. The height twin of <see
+    /// cref="PlacementRotationPacket"/>, and needed for the same reason: the placement interaction carries no room for
+    /// extra data, so the value has to have been sent already.
     ///
-    /// ProtoContract for the reason spelled out on every packet in this file — there is no
-    /// exemption, and assuming there was cost a shipped release once.
+    /// ProtoContract required; see PacketContractNote.
     /// </summary>
     [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
     public class PlacementHeightPacket
@@ -120,13 +125,10 @@ namespace UniversalDisplayLib
     /// <summary>
     /// Tells a joining client the limits the SERVER will enforce.
     ///
-    /// WHY THIS EXISTS. The step is the player's preference, but the LIMIT is the server's
-    /// rule - how far an item may be raised at all is shared, because the result is stored
-    /// on the block and everyone sees it. Both sides used to clamp with their own copy of
-    /// the config, so a client with a larger limit drew a ghost at a height the server then
-    /// pulled back, and the item did not land where the ghost said it would.
-    ///
-    /// **The ProtoContract is required** - see PacketContractNote for what its absence cost.
+    /// WHY THIS EXISTS. The step is the player's preference, but the LIMIT is the server's rule - how far an item may
+    /// be raised at all is shared, because the result is stored on the block and everyone sees it. If each side clamped
+    /// with its own copy of the config, a client with a larger limit would draw a ghost at a height the server then
+    /// pulls back.
     /// </summary>
     [ProtoContract(ImplicitFields = ImplicitFields.AllPublic)]
     public class PlacementLimitsPacket
@@ -142,7 +144,7 @@ namespace UniversalDisplayLib
         /// <summary>See ServerRules.PrecisePlacementOn - receiving this rebuilds the grid.</summary>
         public bool PrecisePlacement;
 
-        /// <summary>How small / big an item may be made (lib 1.4.0). See PlacementScale.Min.</summary>
+        /// <summary>How small / big an item may be made . See PlacementScale.Min.</summary>
         public int SizeMinPercent;
         public int SizeMaxPercent;
     }
@@ -150,26 +152,15 @@ namespace UniversalDisplayLib
     /// <summary>
     /// The settings the SERVER decides, as told to this client.
     ///
-    /// WHY THIS EXISTS, and it is the same lesson three times over. Every one of these is
-    /// read as `UniversalDisplayLibConfig.Current` on whichever side happens to be running,
-    /// so a "server setting" was really "two copies that can disagree". On 2026-09-10 the
-    /// two files on one machine read:
+    /// Read as `UniversalDisplayLibConfig.Current`, these would be two copies that can disagree: a client could allow
+    /// overlapping placements and never show the "shelf full" warning, because it was asking itself rather than the
+    /// server.
     ///
-    ///     AllowItemOverlap   server False   client True
-    ///     PrecisePlacement   server False   client True
-    ///     HeightLimitVoxels  server 1.0     client 8.0
+    /// Null means the server has not said - singleplayer before the push, or an older server - and every property falls
+    /// back to the local config.
     ///
-    /// The client cheerfully allowed overlapping placements and never showed the "shelf
-    /// full" warning, because it was asking itself rather than the server. It had looked
-    /// correct until then only because both files still held the default.
-    ///
-    /// Null means the server has not said - singleplayer before the push, or an older
-    /// server - and every property falls back to the local config, which is the behaviour
-    /// that existed before any of this.
-    ///
-    /// NOT merged into `Current`. Writing the server's answers into the local config object
-    /// would put them in the player's own file the next time it is saved, so a player who
-    /// visited a strict server would carry its rules home.
+    /// NOT merged into `Current`. Writing the server's answers into the local config object would put them in the
+    /// player's own file the next time it is saved, so a player who visited a strict server would carry its rules home.
     /// </summary>
     public static class ServerRules
     {
@@ -201,18 +192,13 @@ namespace UniversalDisplayLib
     }
 
     /// <summary>
-    /// The height nudge a player wants their next placed item to sit at, in voxels away
-    /// from where it would rest on its own.
+    /// The height nudge a player wants their next placed item to sit at, in voxels away from where it would rest on its
+    /// own.
     ///
-    /// **A CORRECTION, NOT A POSITION.** `StackBaseY` already puts an item on top of
-    /// whatever is under it, and this is only added to that — so zero means "wherever it
-    /// naturally lands", which is what every item placed before this existed has stored.
-    /// That is what makes the feature free to ignore.
-    ///
-    /// Deliberately a near-copy of <see cref="PlacementRotation"/>, including sending the
-    /// value rather than deriving it on both sides. Everything that class's comments say
-    /// about the client and server drifting apart applies here word for word; nothing here
-    /// is different enough to justify a different shape.
+    /// **A CORRECTION, NOT A POSITION.** `StackBaseY` already puts an item on top of whatever is under it, and this is
+    /// only added to that — so zero means "wherever it naturally lands", which is what every item placed before this
+    /// existed has stored. Deliberately a near-copy of <see cref="PlacementRotation"/>, including sending the value
+    /// rather than deriving it on both sides.
     /// </summary>
     public static class PlacementHeight
     {
@@ -226,14 +212,12 @@ namespace UniversalDisplayLib
         /// <summary>
         /// How far either way a nudge may go.
         ///
-        /// **THE SERVER'S NUMBER WINS, AND THE CLIENT IS TOLD IT ON JOIN.** The limit is a
-        /// rule rather than a preference: the height ends up stored on the block and
-        /// everyone sees it, so one player cannot be allowed a taller one. Both sides used
-        /// to clamp with their own copy of the config, which is exactly how the ghost came
-        /// to show a height the server then pulled back - reported 2026-09-10.
+        /// **THE SERVER'S NUMBER WINS, AND THE CLIENT IS TOLD IT ON JOIN.** The limit is a rule rather than a
+        /// preference: the height ends up stored on the block and everyone sees it, so one player cannot be allowed a
+        /// taller one.
         ///
-        /// Falls back to this side's own config when the server has not said (singleplayer
-        /// before the push, or an older server), which is the behaviour that existed before.
+        /// Falls back to this side's own config when the server has not said (singleplayer before the push, or an older
+        /// server).
         /// </summary>
         public static float Limit =>
             ServerLimit ?? Math.Clamp(UniversalDisplayLibConfig.Current?.HeightLimitVoxels ?? 8f, 1f, 16f);
@@ -256,7 +240,7 @@ namespace UniversalDisplayLib
         /// repeated stepping cannot accumulate float dust into the saved value.
         /// </summary>
         public static float Clamp(float voxels)
-            => (float)Math.Round(Math.Clamp(voxels, -Limit, Limit), 3);
+            => (float)Math.Round(Math.Clamp(float.IsFinite(voxels) ? voxels : 0f, -Limit, Limit), 3);   // Math.Clamp lets NaN through
 
         public static void Remember(string playerUid, float voxels)
         {
@@ -318,24 +302,17 @@ namespace UniversalDisplayLib
     /// <summary>
     /// The angle a player wants their next placed item turned to, in quarter turns.
     ///
-    /// It has to TRAVEL with the interaction rather than be worked out twice. The client
-    /// previews from its own state while the server places from the BlockSelection it
-    /// receives, and anything derived independently on the two sides drifts apart — which is
-    /// exactly why sub-voxel placement was reverted, and why the session log's conclusion was
-    /// that the value must be sent. So the client owns it, sends it whenever it changes, and
-    /// the server remembers the last one per player.
+    /// It has to TRAVEL with the interaction rather than be worked out twice. The client previews from its own state
+    /// while the server places from the BlockSelection it receives, and anything derived independently on the two sides
+    /// drifts apart. So the client owns it, sends it whenever it changes, and the server remembers the last one per
+    /// player.
     ///
-    /// **Free rotation since 2026-07-29**, sharing `RotationStepDegrees` with the wrench so
-    /// one setting governs turning an item before and after it is placed.
+    /// **Free rotation**, sharing `RotationStepDegrees` with the wrench so one setting governs turning an item before
+    /// and after it is placed.
     ///
-    /// It was quarter turns only, because a footprint is an axis-aligned box and
-    /// `RotatedFootprint` swaps width and length only past 45° — so at any other angle the
-    /// fit test measures the item square while the model sits turned, and "fits" becomes an
-    /// approximation. That restriction existed because nothing SHOWED the discrepancy.
-    ///
-    /// The ghost removed the reason for it. The player can now see the item overhang, which
-    /// is better feedback than a rule preventing them from trying. The wrench has always
-    /// worked this way on already-placed items and nobody has minded.
+    /// A footprint is an axis-aligned box and `RotatedFootprint` swaps width and length only past 45°, so at any other
+    /// angle the fit test measures the item square while the model sits turned. The ghost shows the player any
+    /// overhang.
     /// </summary>
     public static class PlacementRotation
     {
@@ -363,16 +340,13 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Back to 0 once an item has been placed, so a turn applies to ONE placement rather
-        /// than silently to everything afterwards — the angle persisting invisibly was the
-        /// main confusion in testing.
+        /// Back to 0 once an item has been placed, so a turn applies to ONE placement rather than silently to
+        /// everything afterwards.
         ///
-        /// Safe only because stacking inherits the angle of the item it is stacking onto: a
-        /// pile still comes out uniform without the key being pressed again. Before that
-        /// existed, resetting would have meant re-pressing for every item of a stack.
+        /// Safe only because stacking inherits the angle of the item it is stacking onto: a pile still comes out
+        /// uniform.
         ///
-        /// Both sides run the placement, so each resets its own copy and they stay in step
-        /// without another packet.
+        /// Both sides run the placement, so each resets its own copy and they stay in step without another packet.
         /// </summary>
         public static void ResetAfterPlacing(ICoreAPI api, IPlayer player)
             => ResetAfterPlacing(api, player, null, null);
@@ -390,12 +364,9 @@ namespace UniversalDisplayLib
             if (player == null) return;
             ByPlayer.Remove(player.PlayerUID);
 
-            // TELL THE CLIENT. Relying on both sides to reset themselves does not work: the
-            // client's PlaceItem can bail out before this point (its TryPutInto returns 0 on a
-            // predicted placement), so the server cleared its copy while the client kept the
-            // old angle — the preview and the info panel then said 90 while the server would
-            // have placed at 0. Sending it makes the client's value follow the authority,
-            // which is the same reasoning as sending the angle in the first place.
+            // TELL THE CLIENT. Both sides resetting themselves does not work: the client's PlaceItem can bail out
+            // before this point (its TryPutInto returns 0 on a predicted placement), and it would keep the old angle
+            // while the server cleared its copy.
             if (player is IServerPlayer sp)
             {
                 UniversalDisplayLibMod.ServerChannel?.SendPacket(new PlacementRotationPacket { Deg = 0, X = placedAt?.X ?? 0, Y = placedAt?.Y ?? 0, Z = placedAt?.Z ?? 0, Dimension = placedAt?.dimension ?? 0, PlacedSlot = placedSlot }, sp);
@@ -453,17 +424,16 @@ namespace UniversalDisplayLib
 
         private PlacementGhostRenderer ghostRenderer;
         private GuiDialogItemTuner tuner;
+        private GuiDialogFloatTuner floatTuner;
         private ICoreClientAPI capi;
 
         /// <summary>
-        /// Sprint + wheel. "Sprint" and "ctrl" are the same physical key for most players —
-        /// ClientSettings clones keyMapping["ctrl"] from keyMapping["sprint"] unless
-        /// separateCtrlKeyForMouse is on — so this is the same modifier as ctrl+wrench and
-        /// there is nothing new to learn. Reading the KEY rather than the ACTION is the
-        /// settled rule: ORing the two made the swap modifier depend on the player's own
-        /// keybinds and look intermittent.
+        /// Sprint + wheel. "Sprint" and "ctrl" are the same physical key for most players — ClientSettings clones
+        /// keyMapping["ctrl"] from keyMapping["sprint"] unless separateCtrlKeyForMouse is on — so this is the same
+        /// modifier as ctrl+wrench and there is nothing new to learn. Read as the KEY rather than the ACTION, so it
+        /// does not depend on the player's keybinds.
         /// </summary>
-        /// <summary>Controls-menu entries for the wheel modifiers (turn + height lib 1.3.1, now 1.4.0; resize lib 1.4.0). Registered in StartClientSide.</summary>
+        /// <summary>Controls-menu entries for the wheel modifiers . Registered in StartClientSide.</summary>
         public const string TurnHotKey = "universaldisplaylib-turn";
         public const string HeightHotKey = "universaldisplaylib-height";
         public const string ScaleHotKey = "universaldisplaylib-scale";
@@ -495,13 +465,10 @@ namespace UniversalDisplayLib
             EntityControls controls = capi.World.Player?.Entity?.Controls;
             if (controls == null) return;
 
-            // CTRL FIRST, so holding both modifiers behaves exactly as it did before height
-            // existed. ShiftKey/CtrlKey are the modifier KEYS rather than the Sneak/Sprint
-            // ACTIONS — the settled rule in this file, because ORing an action with a key
-            // made the modifier depend on the player's own keybinds and look intermittent.
-            // REMAPPABLE (Calm, 2026-10-19: "Sneak throws off the position ... Make them remappable"): the two keys are
-            // their own entries in the game's Controls menu, read as KEYS (HotKeyHeld) - default Left Ctrl / Left Shift,
-            // the game's own Sprint / Sneak defaults - so a player can move height off the key that crouches them.
+            // Ctrl first. ShiftKey/CtrlKey are the modifier KEYS rather than the Sneak/Sprint ACTIONS, so nothing
+            // depends on the player's keybinds. REMAPPABLE: the two keys are their own entries in the game's Controls
+            // menu, read as KEYS (HotKeyHeld) - default Left Ctrl / Left Shift, the game's own Sprint / Sneak defaults
+            // - so a player can move height off the key that crouches them.
             bool handled;
             if (HotKeyHeld(capi, TurnHotKey))
             {
@@ -517,7 +484,7 @@ namespace UniversalDisplayLib
             }
             else if (HotKeyHeld(capi, ScaleHotKey))
             {
-                // Resize + wheel (lib 1.4.0), split the same way: a pad sizes the item about to be placed, an item THAT one.
+                // Resize + wheel, split the same way: a pad sizes the item about to be placed, an item THAT one.
                 handled = TryWheelScale(capi, args.delta > 0);
             }
             else return;
@@ -533,18 +500,16 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Changing what you are holding drops the pending angle.
         ///
-        /// Reported 2026-07-31: turn a shirt to 90°, wheel across to a wrench, and the wrench
-        /// is at 90° too — the angle belonged to the *player* rather than to the thing being
-        /// placed. It is the same complaint that produced the reset-after-placing rule, which
-        /// exists so a turn applies to ONE placement instead of silently to everything
-        /// afterwards; picking up something else ends that placement just as surely as making
-        /// it does. The angle was simply outliving the only event that was thought to end it.
+        /// Without this: turn a shirt to 90°, wheel across to a wrench, and the wrench is at 90° too — the angle
+        /// belonged to the *player* rather than to the thing being placed. It is the same complaint that produced the
+        /// reset-after-placing rule, which exists so a turn applies to ONE placement instead of silently to everything
+        /// afterwards; picking up something else ends that placement just as surely as making it does. The angle was
+        /// simply outliving the only event that was thought to end it.
         ///
-        /// **The send is not optional and the guard on it is not either.** The server places
-        /// from the last angle it was told, so clearing only the client's copy would leave the
-        /// two disagreeing — the exact fault that made `ResetAfterPlacing` push a packet back.
-        /// But players scroll the hotbar constantly, so this sends ONLY when there is
-        /// something to clear.
+        /// **The send is not optional and the guard on it is not either.** The server places from the last angle it was
+        /// told, so clearing only the client's copy would leave the two disagreeing — the exact fault that made
+        /// `ResetAfterPlacing` push a packet back. But players scroll the hotbar constantly, so this sends ONLY when
+        /// there is something to clear.
         /// </summary>
         private void OnActiveSlotChanged(ActiveSlotChangeEventArgs args)
         {
@@ -586,15 +551,13 @@ namespace UniversalDisplayLib
             {
                 var now = RulesOf(UniversalDisplayLibConfig.Current);
 
-                // NOTHING TO SAY IF NO SERVER RULE CHANGED. The managers forward a client's
-                // save to the server whenever an ADMIN saves - their own client settings
-                // included - so without this the server announced a reload, re-pushed the
-                // rules and rebuilt the grid for a file that had not moved.
+                // NOTHING TO SAY IF NO SERVER RULE CHANGED. The managers forward a client's save to the server whenever
+                // an ADMIN saves - their own client settings included - so without this the server would re-push the
+                // rules and rebuild the grid for a file that has not moved.
                 //
-                // Compared with what the server last TOLD its players, not with the config
-                // a moment ago (2026-10-22). In singleplayer the client and the server share
-                // ONE config object, and the client reloads first - so "a moment ago" was
-                // already the new file and every change looked like no change.
+                // Compared with what the server last TOLD its players, not with the config a moment ago. In
+                // singleplayer the client and the server share ONE config object, and the client reloads first - so "a
+                // moment ago" is already the new file.
                 if (now == (lastServerRules ?? was))
                 {
                     api.Logger.VerboseDebug("[UniversalDisplayLib] Server: config re-read, no server rule changed.");
@@ -647,32 +610,24 @@ namespace UniversalDisplayLib
             // not edit those files, rerun the script). Its item models leave out our display-surface markers too.
             Materials.BlockBehaviorMaterials.ExtraIgnoreElements = block => block.GetBehavior<BlockBehaviorDisplaySurfaces>()?.SurfaceElementNames;
 
-            // PICK UP CONFIG CHANGES MADE IN GAME, without a restart. Integrated Mod Manager
-            // raises `imm.<modid>` after it rewrites the file; ConfigKit and ConfigLib raise
-            // `configkit:<modid>:config-saved` / `configlib:<modid>:config-saved`. All are
-            // vanilla event-bus API and an event nobody raises never fires, so this costs
-            // nothing when none of them is installed -
-            // the same bargain the rest of the mod makes with other mods.
+            // PICK UP CONFIG CHANGES MADE IN GAME, without a restart. Integrated Mod Manager raises `imm.<modid>` after
+            // it rewrites the file; ConfigKit and ConfigLib raise `configkit:<modid>:config-saved` /
+            // `configlib:<modid>:config-saved`. All are vanilla event-bus API and an event nobody raises never fires,
+            // so this costs nothing when none of them is installed.
             //
-            // Registered on BOTH sides deliberately. Almost every setting here is read fresh
-            // at the moment it is used - PlacementHeight.Step is a property, not a cached
-            // field - so a reload takes effect immediately on whichever side reloaded, and
-            // the SERVER re-tells every client its height limit so no ghost is left clamping
-            // against the old number.
+            // Registered on BOTH sides deliberately. Almost every setting here is read fresh at the moment it is used -
+            // PlacementHeight.Step is a property, not a cached field - so a reload takes effect immediately on
+            // whichever side reloaded, and the SERVER re-tells every client its height limit so no ghost is left
+            // clamping against the old number.
             //
-            // THE SERVER RELOAD IS DEFERRED A TICK. ConfigKit and ConfigLib forward the client's
-            // config-saved to the server BEFORE the server has written its own file, then
-            // raises it again after the write. Reloading on the first copy reads the old
-            // values. So every copy RE-ARMS the timer rather than being folded into a pending
-            // one: the reload runs 50 ms after the LAST event, and the last event is the one
-            // raised after the write. Folding them (the first attempt, 2026-09-12) swallowed
-            // the post-write copy whenever the write took longer than the timer, and the
-            // reload read the old file.
+            // THE SERVER RELOAD IS DEFERRED A TICK. ConfigKit and ConfigLib forward the client's config-saved to the
+            // server BEFORE the server has written its own file, then raises it again after the write. Reloading on the
+            // first copy reads the old values. So every copy RE-ARMS the timer rather than being folded into a pending
+            // one: the reload runs 50 ms after the LAST event, and the last event is the one raised after the write.
             //
-            // WHO SAVED: a forwarded event carries the saving player's UID as "player" in
-            // its data tree (ConfigKit and ConfigLib both set it; IMM does not), so the
-            // server's log can name them. Without it the line reads as if the server
-            // changed something by itself - which is exactly how it was read, 2026-09-12.
+            // WHO SAVED: a forwarded event carries the saving player's UID as "player" in its data tree (ConfigKit and
+            // ConfigLib both set it; IMM does not), so the server's log can name them. Without it the line reads as if
+            // the server changed something by itself.
             long pendingReload = 0;
             EventBusListenerDelegate onConfigChanged =
                 delegate (string eventName, ref EnumHandling handling, IAttribute data)
@@ -700,31 +655,25 @@ namespace UniversalDisplayLib
             api.RegisterBlockClass("BlockUniversalDisplay", typeof(BlockUniversalDisplay));
             api.RegisterBlockEntityClass("BEUniversalDisplay", typeof(BEUniversalDisplay));
 
-            // `DisplaySurfaces`, not `WindowSurfaces`. This is the single most modder-facing
-            // string the lib has — it is what someone else types into their own cabinet's
-            // blocktype JSON — and a name has to match what is registered here, so they cannot
-            // invent `CabinetSurfaces` for themselves. Under a universal lib it must not say
-            // "Window".
+            // The name modders type into their own blocktype JSON, so it does not say "Window".
             api.RegisterBlockBehaviorClass("DisplaySurfaces", typeof(BlockBehaviorDisplaySurfaces));
 
-            // The AutoBoxes Kit (src/autoboxes/, 2026-10-06 - the base the window boxes are rebuilt on):
-            // the invisible filler (assets blocktypes/autoboxesfiller.json) in every space a window reaches.
+            // The AutoBoxes Kit: the invisible filler (assets blocktypes/autoboxesfiller.json) in every space a window
+            // reaches.
             api.RegisterBlockClass("UDAutoBoxesFiller", typeof(BlockAutoBoxesFiller));
             api.RegisterBlockEntityClass("UDAutoBoxesFiller", typeof(BEAutoBoxesFiller));
 
             // The window settings the kit does not have (src/reach/): for now, each pane's 90-degree fallback.
             api.RegisterBlockBehaviorClass("UDAutoBoxes", typeof(Reach.BlockBehaviorUDAutoBoxes));
 
-            // ── LEGACY ALIASES — every published content zip depends on these ──────────
+            // ── LEGACY ALIASES ──────────
             //
-            // A registered name is what a blocktype's JSON asks for by string, so renaming
-            // one without keeping the old alive is an instant crash for anything already
-            // shipped: "Don't know how to instantiate block of class 'BlockWindowDisplay'".
-            // Window Display 1.0.1 is live on ModDB right now asking for exactly these three.
+            // A registered name is what a blocktype's JSON asks for by string, so renaming one without keeping the old
+            // alive is an instant crash for anything already shipped: "Don't know how to instantiate block of class
+            // 'BlockWindowDisplay'".
             //
-            // Registering a second name against the SAME type costs nothing and means an old
-            // content zip and a new one both work against this lib. Do not remove them to
-            // tidy up — they are the only reason the rename is safe.
+            // Registering a second name against the SAME type costs nothing and means an old content zip and a new one
+            // both work against this lib. Do not remove them.
             api.RegisterBlockClass("BlockWindowDisplay", typeof(BlockUniversalDisplay));
             api.RegisterBlockEntityClass("BEWindowDisplay", typeof(BEUniversalDisplay));
             api.RegisterBlockBehaviorClass("WindowSurfaces", typeof(BlockBehaviorDisplaySurfaces));
@@ -781,10 +730,9 @@ namespace UniversalDisplayLib
             BEUniversalDisplay.ForgetServerInstances();
             lastServerRules = UniversalDisplayLibConfig.Current == null ? null : RulesOf(UniversalDisplayLibConfig.Current);
 
-            // TELL EACH PLAYER THE LIMIT AS THEY ARRIVE. The step is theirs; the limit is
-            // ours, because the height is stored on the block and everyone sees it. Without
-            // this the client clamps its ghost with its own config and draws a height the
-            // server then pulls back - the mismatch reported 2026-09-10.
+            // TELL EACH PLAYER THE LIMIT AS THEY ARRIVE. The step is theirs; the limit is ours, because the height is
+            // stored on the block and everyone sees it. Without this the client clamps its ghost with its own config
+            // and draws a height the server then pulls back.
             api.Event.PlayerNowPlaying += byPlayer =>
                 ServerChannel?.SendPacket(ServerRulesPacket(), byPlayer as IServerPlayer);
 
@@ -797,7 +745,19 @@ namespace UniversalDisplayLib
                 .RegisterMessageType<MeasuredItemSizePacket>()
                 .RegisterMessageType<PlacementScalePacket>()
                 .RegisterMessageType<AdjustStoredItemScalePacket>()
+                .RegisterMessageType<FloatMenuOpenPacket>()
+                .RegisterMessageType<FloatTunePacket>()
                 .SetMessageHandler<MeasuredItemSizePacket>(MeasuredItemSizes.Receive)
+                .SetMessageHandler<FloatTunePacket>((player, packet) =>
+                {
+                    if (packet?.SpotId == null) return;
+                    var pos = new BlockPos(packet.X, packet.Y, packet.Z);
+                    if (!MayEditStoredItem(api, player, pos, packet.SpotId)) return;
+                    if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is { } be)
+                        be.SetFloatTuning(packet.SpotId, packet.Reset ? null
+                            : new FloatTuning(packet.Rise, packet.Tilt, packet.Rot, packet.Spin, packet.Bob, packet.BobSeconds,
+                                              packet.TiltForward, packet.OffsetX, packet.OffsetZ));
+                })
                 .SetMessageHandler<PlacementScalePacket>((player, packet) =>
                     PlacementScale.Remember(player?.PlayerUID, packet?.Scale ?? 1f))
                 .SetMessageHandler<AdjustStoredItemScalePacket>((player, packet) =>
@@ -848,13 +808,21 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Server: the checks every "change an item already on a display" packet passes before it
-        /// is acted on. The position and slot id come from the client, so: a sane slot id,
-        /// within 12 blocks (comfortably beyond normal reach), and - the part
-        /// that was missing until 2026-10-22 - LAND CLAIMS. A right-click on a display always asked
-        /// the claim; the mouse wheel did not, so anyone could turn, raise or resize the items on
-        /// a display inside someone else's claim. TryAccess tells the player why itself.
+        /// Server: the checks every "change an item already on a display" packet passes before it is acted on. The
+        /// position and slot id come from the client, so: a sane slot id, within 12 blocks (comfortably beyond normal
+        /// reach), and LAND CLAIMS: a right-click on a display always asks the claim, and without this the mouse wheel
+        /// would let anyone turn, raise or resize the items on a display inside someone else's claim. TryAccess tells
+        /// the player why itself.
         /// </summary>
+        /// <summary>
+        /// Server: open the levitating display's menu for this player (the claim was checked by the click).
+        /// </summary>
+        public static void OpenFloatMenu(IServerPlayer player, BlockPos pos, string spotId)
+        {
+            if (player == null || pos == null || spotId == null) return;
+            ServerChannel?.SendPacket(new FloatMenuOpenPacket { X = pos.X, Y = pos.Y, Z = pos.Z, SpotId = spotId }, player);
+        }
+
         private static bool MayEditStoredItem(ICoreServerAPI api, IServerPlayer player, BlockPos pos, string slotId)
         {
             if (slotId == null || slotId.Length > 128 || player?.Entity == null) return false;
@@ -864,8 +832,8 @@ namespace UniversalDisplayLib
 
         public override void StartClientSide(ICoreClientAPI api)
         {
-            // The wheel's two modifiers, remappable in Controls (lib 1.3.1). No handler: they only matter while the
-            // wheel turns (OnMouseWheel -> HotKeyHeld), and pressing one alone must still sprint / sneak as normal.
+            // The wheel's two modifiers, remappable in Controls . No handler: they only matter while the wheel turns
+            // (OnMouseWheel -> HotKeyHeld), and pressing one alone must still sprint / sneak as normal.
             api.Input.RegisterHotKey(TurnHotKey, Lang.Get("universaldisplaylib:hotkey-turn"), GlKeys.ControlLeft, HotkeyType.CharacterControls);
             api.Input.RegisterHotKey(HeightHotKey, Lang.Get("universaldisplaylib:hotkey-height"), GlKeys.ShiftLeft, HotkeyType.CharacterControls);
             api.Input.RegisterHotKey(ScaleHotKey, Lang.Get("universaldisplaylib:hotkey-scale"), GlKeys.AltLeft, HotkeyType.CharacterControls);
@@ -875,17 +843,11 @@ namespace UniversalDisplayLib
             // make reachable. See VanillaDisplayBoundsPatch for the mechanism.
             VanillaDisplayBoundsPatch.Apply(api);
 
-            // THE R KEY IS GONE, removed 2026-07-31 — sprint + mouse wheel replaces it.
-            //
-            // It was the original way to turn an item before placing it and the wheel was
-            // added beside it, so for a while there were two. Free rotation is what settled
-            // it: at the default 15° step a key needs 24 presses to get round, where the
-            // wheel is one gesture and turns both ways. Keeping a worse duplicate costs a
-            // hotkey slot in a list players scroll through and a second path to keep in step.
-            //
-            // Nothing else referred to it — the interaction help never advertised it, and
-            // the lang entry it used (`placement-rotation`) is still read by the info-panel
-            // fallback in BEUniversalDisplay.GetBlockInfo, so it stays.
+            // Item boxes from what is visible, not from see-through sheet
+            VisibleExtent.Start(api);
+
+            // No R key: sprint + mouse wheel turns an item. The lang entry `placement-rotation` is still read by the
+            // info-panel fallback in BEUniversalDisplay.GetBlockInfo.
 
             // Show the footprint outline on demand, whatever PlacementBox is set to. For
             // lining something up precisely without going to the config and back — the
@@ -982,19 +944,29 @@ namespace UniversalDisplayLib
 
             ClientChannel = api.Network.RegisterChannel(ChannelName)
                 .RegisterMessageType<PlacementRotationPacket>()
-                // Registered here as well as on the server: a message type has to be known
-                // to BOTH channels. Missing on this side, SendPacket goes nowhere and fails
-                // silently — which is exactly what "the wheel does nothing on placed items"
-                // looked like.
+                // Registered here as well as on the server: a message type has to be known to BOTH channels. Missing on
+                // this side, SendPacket goes nowhere and fails silently.
                 .RegisterMessageType<RotateStoredItemPacket>()
                 .RegisterMessageType<PlacementHeightPacket>()
                 .RegisterMessageType<AdjustStoredItemHeightPacket>()
                 .RegisterMessageType<PlacementLimitsPacket>()
                 // measured item sizes go to the server (MeasuredItemSizes); registered on both sides like every type
                 .RegisterMessageType<MeasuredItemSizePacket>()
-                // resize (lib 1.4.0) - last, in the same order as the server's list
+                // resize - last, in the same order as the server's list
                 .RegisterMessageType<PlacementScalePacket>()
                 .RegisterMessageType<AdjustStoredItemScalePacket>()
+                // the levitating display's menu - last, in the same order as the server's list
+                .RegisterMessageType<FloatMenuOpenPacket>()
+                .RegisterMessageType<FloatTunePacket>()
+                .SetMessageHandler<FloatMenuOpenPacket>(packet =>
+                {
+                    if (packet?.SpotId == null) return;
+                    var pos = new BlockPos(packet.X, packet.Y, packet.Z);
+                    if (BEUniversalDisplay.At(api.World.BlockAccessor, pos) is not { } be) return;
+                    floatTuner?.TryClose();
+                    floatTuner = new GuiDialogFloatTuner(api, be, packet.SpotId);
+                    floatTuner.TryOpen();
+                })
                 // The server's rule, not ours - see PlacementHeight.Limit.
                 .SetMessageHandler<PlacementLimitsPacket>(packet =>
                 {
@@ -1028,20 +1000,15 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Wires up the in-game transform editor: its tab, and the two event bus listeners
-        /// that bridge the editor's flat attribute name to the real value at
-        /// <c>displayable.&lt;category&gt;.transform</c>.
+        /// Wires up the in-game transform editor: its tab, and the two event bus listeners that bridge the editor's
+        /// flat attribute name to the real value at <c>displayable.&lt;category&gt;.transform</c>.
         ///
-        /// **ALL OF IT REGISTERED EXACTLY ONCE, HERE.** `IEventAPI` has no way to remove an
-        /// event bus listener — `UnregisterCallback` and `UnregisterGameTickListener` exist,
-        /// nothing for the bus — so anything registered per block entity accumulates for the
-        /// whole session and holds every block entity it captured. That is what this used to
-        /// do: `BEUniversalDisplay.Initialize` registered one per window, on every chunk load,
-        /// for ever. Found by audit 2026-07-30 after RAM was seen climbing across chunk
-        /// reloads.
+        /// **ALL OF IT REGISTERED EXACTLY ONCE, HERE.** `IEventAPI` has no way to remove an event bus listener —
+        /// `UnregisterCallback` and `UnregisterGameTickListener` exist, nothing for the bus — so anything registered
+        /// per block entity accumulates for the whole session and holds every block entity it captured.
         ///
-        /// The set-handler walks <see cref="BEUniversalDisplay.LiveClientInstances"/>, which is
-        /// maintained by Initialize and Cleanup and therefore reflects what is loaded now.
+        /// The set-handler walks <see cref="BEUniversalDisplay.LiveClientInstances"/>, which is maintained by
+        /// Initialize and Cleanup and therefore reflects what is loaded now.
         /// </summary>
         private static void RegisterTransformEditor(ICoreClientAPI api)
         {
@@ -1094,14 +1061,11 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Steps the pending angle and tells the server. <paramref name="direction"/> is
-        /// +1 or -1. Sprint + wheel is the only caller since the R key was removed on
-        /// 2026-07-31; it stays a separate method because the send must not be forgotten.
+        /// Steps the pending angle and tells the server. <paramref name="direction"/> is +1 or -1. Sprint + wheel is
+        /// the only caller; a separate method because the send must not be forgotten.
         ///
-        /// The server places from what it was last told, so it is told now rather than at
-        /// placement time — the placement interaction carries no room for extra data. That
-        /// is the same reasoning that made this a packet rather than something each side
-        /// works out for itself.
+        /// The server places from what it was last told, so it is told now rather than at placement time — the
+        /// placement interaction carries no room for extra data.
         /// </summary>
         private static void RotatePlacement(ICoreClientAPI api, int direction, float seed = 0)
         {
@@ -1111,10 +1075,8 @@ namespace UniversalDisplayLib
 
             ClientChannel?.SendPacket(new PlacementRotationPacket { Deg = PlacementRotation.Local, Pending = true });
 
-            // Say it in words ONLY when the ghost is switched off, because then nothing else
-            // shows the angle and the gesture is completely invisible. This lived on the R
-            // key until that was removed; the reasoning for it belongs to whatever does the
-            // turning, not to the key that used to, so it came here rather than going with it.
+            // Say it in words ONLY when the ghost is switched off, because then nothing else shows the angle and the
+            // gesture is completely invisible.
             if (UniversalDisplayLibConfig.Current?.PlacementGhost != true)
             {
                 api?.TriggerIngameError(api, "windowdisplayrotate",
@@ -1145,10 +1107,9 @@ namespace UniversalDisplayLib
             angle = 0;
             if (!(held is { Empty: false } && target?.SurfaceBehavior is { } behavior
                 && behavior.TryGetGhostOn(target, selection, held, out var loc, out _, out angle, out _))) return false;
-            // The ghost's angle includes the surface's own facing - pad previews always did, stack previews too since
-            // lib 1.3.1 (the stacked ghost on a corner shelf's side) - while the pending turn is kept without it. Taking
-            // it off only for pads made the first Sprint + wheel notch on a stacked ghost jump by the facing (90 on a
-            // corner shelf's side - Calm, 2026-10-19).
+            // The ghost's angle includes the surface's own facing - pad and stack previews alike, while the pending
+            // turn is kept without it. Taken off only for pads, the first Sprint + wheel notch on a stacked ghost would
+            // jump by the facing.
             angle -= target.SurfaceFacingDeg(behavior.GetSurface(loc.SurfaceIndex));
             return true;
         }
@@ -1326,7 +1287,7 @@ namespace UniversalDisplayLib
             return true;
         }
 
-        /// <summary>Steps the pending size (lib 1.4.0) and tells the server, as AdjustPlacementHeight does.</summary>
+        /// <summary>Steps the pending size and tells the server, as AdjustPlacementHeight does.</summary>
         private static void AdjustPlacementScale(ICoreClientAPI api, int direction)
         {
             PlacementScale.Local = PlacementScale.Clamp(PlacementScale.Local + direction * PlacementScale.Step);
@@ -1336,8 +1297,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// One wheel notch of size (lib 1.4.0) - the gate and the split of <see cref="TryWheelHeight"/>: an item
-        /// already there is sized by packet (server state), a pad or bare ground sizes what is about to be placed.
+        /// One wheel notch of size - the gate and the split of <see cref="TryWheelHeight"/>: an item already there is
+        /// sized by packet (server state), a pad or bare ground sizes what is about to be placed.
         /// </summary>
         private static bool TryWheelScale(ICoreClientAPI api, bool up)
         {
@@ -1390,27 +1351,23 @@ namespace UniversalDisplayLib
             // event += and a RegisterRenderer both have to be undone by hand.
             if (capi != null)
             {
-                // LAST CHANCE TO SAVE TUNED SIZES. Leaving the world with an axis still
-                // selected used to drop them on the floor — see TuningFiles.SizesDirty. The chat line
-                // will not be seen from here, but the file and the log entry are the point.
+                // Last chance to save tuned sizes when leaving the world with an axis still selected; see
+                // TuningFiles.SizesDirty.
                 if (TuningFiles.SizesDirty) TuningFiles.Save(capi, announce: false);
 
                 capi.Event.MouseWheelMove -= OnMouseWheel;
                 capi.Event.AfterActiveSlotChanged -= OnActiveSlotChanged;
+                VisibleExtent.Stop();
 
-                // TAKE THE RENDERER OUT OF THE LOOP BEFORE DISPOSING IT, and note this runs
-                // while capi is still live, which is why it sits inside this block.
+                // TAKE THE RENDERER OUT OF THE LOOP BEFORE DISPOSING IT, and note this runs while capi is still live,
+                // which is why it sits inside this block.
                 //
-                // There was no UnregisterRenderer call here at all — only a Dispose() under
-                // a comment claiming the renderer "unregisters cleanly". It does not;
-                // `IClientEventAPI.UnregisterRenderer(IRenderer, EnumRenderStage)` is the
-                // matching call. RegisterRenderer with nothing undoing it is the same shape
-                // as the MouseWheelMove lambda that was fixed on 2026-07-30.
+                // `IClientEventAPI.UnregisterRenderer(IRenderer, EnumRenderStage)` is the matching call; Dispose()
+                // alone does not unregister.
                 //
-                // The ORDER is the part that could actually misbehave: Dispose() releases the
-                // uploaded MeshRefs while the renderer is still registered, so a frame drawn
-                // between the two finds an empty cache and uploads fresh GPU meshes during
-                // teardown that nothing will ever free.
+                // Dispose() releases the uploaded MeshRefs while the renderer is still registered, so a frame drawn
+                // between the two finds an empty cache and uploads fresh GPU meshes during teardown that nothing will
+                // ever free.
                 if (ghostRenderer != null)
                 {
                     capi.Event.UnregisterRenderer(ghostRenderer, EnumRenderStage.Opaque);

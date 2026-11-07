@@ -9,20 +9,17 @@ using Vintagestory.API.Util;
 namespace UniversalDisplayLib.Materials
 {
     /// <summary>
-    /// The handbook's "Created by" for a recipe that copies the materials from a REPEATED ingredient - the tall
-    /// windows (two or three casements, all the same key, <c>copyAttributesFrom</c> that key). Calm, 2026-10-08:
-    /// the page for a larch / quartz tall casement showed the top casement in larch / quartz and the one under it
-    /// plain.
+    /// The handbook's "Created by" for a recipe that copies the materials from a repeated ingredient: the tall windows
+    /// (two or three casements, all the same key, <c>copyAttributesFrom</c> that key). Without this, the page for a
+    /// larch / quartz tall casement shows the top casement in larch / quartz and the one under it plain.
     ///
     /// The game already gives the page's materials to the copy-from ingredient (vssurvivalmod
     /// CollectibleBehaviorHandbookTextAndExtraInfo, the CopyAttributesFrom branch before it builds the
-    /// SlideshowGridRecipeTextComponent) - but it finds that ingredient with GetIngredientById, which returns
-    /// the FIRST grid cell with that id (vsapi RecipeBase.GetIngredientById), so only one cell changes. This
-    /// gives every other cell with the same id the same materials, just before the slideshow is built.
-    /// Only for recipes whose output uses this kit's materials behaviour. Client only (applied by MaterialsSystem.StartClientSide).
+    /// SlideshowGridRecipeTextComponent), but it finds that ingredient with GetIngredientById, which returns the first
+    /// grid cell with that id (vsapi RecipeBase.GetIngredientById), so only one cell changes. This gives every other
+    /// cell with the same id the same materials, just before the slideshow is built. Only for recipes whose output uses
+    /// this kit's materials behaviour. Client only (applied by MaterialsSystem.StartClientSide).
     /// </summary>
-    // No [HarmonyPatch] attribute on purpose: a host mod that applies PatchAll to its own assembly would otherwise apply
-    // the kit's patches a second time. The kit applies each one by name (see the Apply methods).
     public static class MaterialsHandbookPatch
     {
         public static void Prefix(ICoreClientAPI api, ref GridRecipe[] gridRecipes)
@@ -51,8 +48,8 @@ namespace UniversalDisplayLib.Materials
         }
 
         /// <summary>
-        /// A recipe that FIXES a material on its output (the game's leaded pane -> a leaded window) belongs only on the page of
-        /// that material; a copy-from recipe (the window takes the pane's glass) shows on every page. 2026-10-14.
+        /// A recipe that fixes a material on its output (the game's leaded pane -> a leaded window) belongs only on the
+        /// page of that material; a copy-from recipe (the window takes the pane's glass) shows on every page.
         /// </summary>
         public static bool MatchesPage(GridRecipe recipe, ItemStack page)
         {
@@ -92,16 +89,15 @@ namespace UniversalDisplayLib.Materials
         }
 
         /// <summary>
-        /// A MATERIAL RECIPE (MaterialRecipes) has wildcard cells, and the slideshow fills every wildcard cell with its OWN
-        /// random item - frame planks of three woods, which reads as "mixing is fine". So it is shown as COPIES instead
-        /// (never the real recipe - the handbook hands over the game's own recipe objects), each with ONE material per kind,
-        /// and the slideshow flips through them (Calm, 2026-10-14: "if using one material cycles all the ones that can be
-        /// used ... need one that shows mixed aswell"):
-        /// the page's own materials first, then - on a page whose stack MIXES them (oak shelves on a walnut frame) - every
-        /// other mixed pair, or - on a page with one material throughout (oak on oak) - every material in step. So a mod
-        /// writes a matching and a mixed creative stack ("creative": "written") and each page's recipe shows its side.
-        /// The output picture is made by running the copy on those items (GenerateCurrentVisibleOutputStack), so it shows the
-        /// same materials. The page comes from <see cref="CreatedByPagePatch"/>.
+        /// A material recipe (MaterialRecipes) has wildcard cells, and the slideshow fills every wildcard cell with its
+        /// own random item: frame planks of three woods, which reads as "mixing is fine". So it is shown as copies
+        /// instead (never the real recipe, because the handbook hands over the game's own recipe objects), each with
+        /// one material per kind, and the slideshow flips through them: the page's own materials first, then, on a page
+        /// whose stack mixes them (oak shelves on a walnut frame), every other mixed pair, or on a page with one
+        /// material throughout (oak on oak), every material in step. So a mod writes a matching and a mixed creative
+        /// stack ("creative": "written") and each page's recipe shows its side. The output picture is made by running
+        /// the copy on those items (GenerateCurrentVisibleOutputStack), so it shows the same materials. The page comes
+        /// from <see cref="CreatedByPagePatch"/>.
         /// </summary>
         private static System.Collections.Generic.List<GridRecipe> MaterialCopies(ICoreClientAPI api, GridRecipe recipe, System.Collections.Generic.Dictionary<string, string> letters)
         {
@@ -142,15 +138,14 @@ namespace UniversalDisplayLib.Materials
             var source = cells.FirstOrDefault(c => c?.Id == id && c.ResolvedItemStack != null && BlockBehaviorMaterials.TypesOf(c.ResolvedItemStack.Attributes).Count > 0);
             if (source == null) return true;
             var types = BlockBehaviorMaterials.TypesOf(source.ResolvedItemStack.Attributes);
-            // the output block's own mod's materials (2026-10-10 - one code can be a rod in one mod and a plate in another)
+            // The output block's own mod's materials: one code can be a rod in one mod and a plate in another.
             string domain = recipe.Output?.ResolvedItemStack?.Collectible?.Code?.Domain;
 
             foreach (var cell in cells)
             {
                 if (cell?.Code == null) continue;
-                // A named wildcard (`"name": "wood"` on game:plank-*) is split by the game's recipe loader into ONE
-                // RECIPE PER PLANK, each cell exact (Calm, 2026-10-09: "it still allows diffent boards at least it
-                // shows that in the recipe") - so a recipe whose plank is another wood is left out here.
+                // A named wildcard (`"name": "wood"` on game:plank-*) is split by the game's recipe loader into one
+                // recipe per plank, each cell exact, so a recipe whose plank is another wood is left out here.
                 if (cell.MatchingType == EnumRecipeMatchType.Exact)
                 {
                     if (materials.TryMaterialOfItem(cell.Code, out string cellKind, out string cellCode, domain)
@@ -223,14 +218,12 @@ namespace UniversalDisplayLib.Materials
     }
 
     /// <summary>
-    /// The handbook finds a page's recipes with Satisfies, and the game's nested-tree subset check compares <c>types</c> the
-    /// wrong way round (a nested tree must hold all of ours) - so a recipe fixing the glass but taking the wood from the grid (the game's
-    /// leaded pane routes) never reached the leaded window's page. Only while a page is being built (CreatedByPagePatch.Page)
-    /// and only for blocks and items with materials: the output's own types must all be on the page; crafting is untouched.
-    /// 2026-10-14.
+    /// The handbook finds a page's recipes with Satisfies, and the game's nested-tree subset check compares
+    /// <c>types</c> the wrong way round (a nested tree must hold all of ours), so a recipe fixing the glass but taking
+    /// the wood from the grid (the game's leaded pane routes) would never reach the leaded window's page. Only while a
+    /// page is being built (CreatedByPagePatch.Page) and only for blocks and items with materials: the output's own
+    /// types must all be on the page. Crafting is untouched.
     /// </summary>
-    // No [HarmonyPatch] attribute on purpose: a host mod that applies PatchAll to its own assembly would otherwise apply
-    // the kit's patches a second time. The kit applies each one by name (see the Apply methods).
     public static class MaterialsHandbookOutputPatch
     {
         public static void Postfix(CollectibleObject __instance, ItemStack thisStack, ItemStack otherStack, ref bool __result)

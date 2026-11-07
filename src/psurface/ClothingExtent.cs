@@ -6,24 +6,23 @@ using Vintagestory.API.Common;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// WORN ITEMS ARE DRAWN ON AN INVISIBLE SERAPH (Calm, 2026-10-07: "Must be the seraph" ... "do that so it works for all
-    /// equipment"). A clothing model's parts name the seraph bone they hang from (<c>stepParentName</c>: a boot's
-    /// LowerFootR / LowerFootL), and the game builds the item's mesh on the seraph so the pair lands on its feet - the
-    /// seraph's own geometry stays in that mesh, invisible, up to head height. Measured as is, a pair of boots was 27 voxels
-    /// tall and fitted nowhere; its outline reached the ceiling.
+    /// WORN ITEMS ARE DRAWN ON AN INVISIBLE SERAPH. A clothing model's parts name the seraph bone they hang from
+    /// (<c>stepParentName</c>: a boot's LowerFootR / LowerFootL), and the game builds the item's mesh on the seraph so
+    /// the pair lands on its feet - the seraph's own geometry stays in that mesh, invisible, up to head height.
+    /// Measured as is, a pair of boots was 27 voxels tall and fitted nowhere; its outline reached the ceiling.
     ///
     /// So for any item whose model attaches to bones, the lib places just the item's OWN parts on the seraph's skeleton
-    /// (rest pose, as the game does), puts them through the item's display transform, and records that as the mesh's extent
-    /// (BEUniversalDisplay.SetMeshExtent). The outline, the placing ghost's outline and the measured footprint all read it.
-    /// Checked against vanilla's own shelf sizes: high leather boots 6.8 x 6.4 x 4.2 (vanilla 8 x 6.5 x 4), commoner
-    /// 6.6 x 7.3 x 4.0 (8 x 7.5 x 4), hunter 7.0 x 8.2 x 4.3 (8 x 8.5 x 4).
+    /// (rest pose, as the game does), puts them through the item's display transform, and records that as the mesh's
+    /// extent (BEUniversalDisplay.SetMeshExtent). The outline, the placing ghost's outline and the measured footprint
+    /// all read it. Checked against vanilla's own shelf sizes: high leather boots 6.8 x 6.4 x 4.2 (vanilla 8 x 6.5 x
+    /// 4), commoner 6.6 x 7.3 x 4.0 (8 x 7.5 x 4), hunter 7.0 x 8.2 x 4.3 (8 x 8.5 x 4).
     ///
-    /// Falls back to the whole mesh (as before) if the model has no step parents or names a bone the seraph does not have.
+    /// Falls back to the whole mesh if the model has no step parents or names a bone the seraph does not have.
     ///
-    /// ONLY WHEN THE DRAWN MODEL IS THE SERAPH ONE (2026-10-10, Calm: "would it detect everything now say someone made their
-    /// own with folding stuff?"): the correction is used only if the drawn mesh CONTAINS the garment's own parts and is
-    /// clearly bigger than them - the invisible seraph round them. A folded model (the game's display shape, or one a mod
-    /// builds in its own code) does not, so it keeps the size it is drawn at. Decided by the model, not by where it came from.
+    /// ONLY WHEN THE DRAWN MODEL IS THE SERAPH ONE: the correction is used only if the drawn mesh CONTAINS the
+    /// garment's own parts and is clearly bigger than them - the invisible seraph round them. A folded model (the
+    /// game's display shape, or one a mod builds in its own code) does not, so it keeps the size it is drawn at.
+    /// Decided by the model, not by where it came from.
     /// </summary>
     public static class ClothingExtent
     {

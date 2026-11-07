@@ -9,19 +9,18 @@ using Vintagestory.API.Server;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// SIZE OF A DISPLAYED ITEM (lib 1.4.0, Calm 2026-10-21: "if we can do scale as well as the rotation and the height";
-    /// tried in Experiments/Universal Display - Item Scale, brought in without the tilt: "size will be handy for things").
+    /// SIZE OF A DISPLAYED ITEM.
     ///
     /// The size lives ON THE ITEM, as the stack attribute <see cref="AttributeKey"/>, not in a per-slot table like the
     /// turn and the height: every fit and stacking check gets an item's size through
-    /// BlockBehaviorDisplaySurfaces.GetDisplayableAttributes, which sees the slot and its item but not the slot's id, so
-    /// the one place that applies the scale there covers fitting, stacking, free-stack rests and embedded displays alike.
-    /// The model is scaled in BEUniversalDisplay.BuildSlotMatrix (round the item's bottom centre), never in its mesh or
-    /// transform, so the measured item sizes and the mesh cache keep describing the item at its own size.
+    /// BlockBehaviorDisplaySurfaces.GetDisplayableAttributes, which sees the slot and its item but not the slot's id,
+    /// so the one place that applies the scale there covers fitting, stacking, free-stack rests and embedded displays
+    /// alike. The model is scaled in BEUniversalDisplay.BuildSlotMatrix (round the item's bottom centre), never in its
+    /// mesh or transform, so the measured item sizes and the mesh cache keep describing the item at its own size.
     ///
-    /// An item that is not on a display yet (in hand) has no attribute; it takes the size its player has wound up for the
-    /// next placement (<see cref="PlacementScale"/>), found from the player inventory the slot belongs to. Taking an item
-    /// off (or breaking the block) removes the attribute, so it stacks in an inventory as before.
+    /// An item that is not on a display yet (in hand) has no attribute; it takes the size its player has wound up for
+    /// the next placement (<see cref="PlacementScale"/>), found from the player inventory the slot belongs to. Taking
+    /// an item off (or breaking the block) removes the attribute, so it stacks in an inventory as before.
     /// </summary>
     public static class ItemScale
     {
@@ -87,7 +86,7 @@ namespace UniversalDisplayLib
         private static readonly Dictionary<string, float> ByPlayer = new();
 
         /// <summary>Held inside the limits and rounded to a thousandth, so stepping cannot gather float dust.</summary>
-        public static float Clamp(float scale) => (float)Math.Round(Math.Clamp(scale, Min, Max), 3);
+        public static float Clamp(float scale) => (float)Math.Round(Math.Clamp(float.IsFinite(scale) ? scale : 1f, Min, Max), 3);   // Math.Clamp lets NaN through
 
         public static void Remember(string playerUid, float scale)
         {

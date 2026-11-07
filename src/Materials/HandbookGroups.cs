@@ -51,9 +51,9 @@ namespace UniversalDisplayLib.Handbook
         private static readonly object gate = new();
         private static Harmony harmony;
         /// <summary>
-        /// The mod ids whose blocks and items may carry a JSON <c>handbookGroup</c> (Apply's jsonDomain). Replaced whole under
-        /// <c>gate</c> and read under it too - not <c>volatile</c>: Attribute Rendering Library's code scanner cannot read a
-        /// volatile field and logged an error for every mod carrying this file (Calm's log, 2026-10-15).
+        /// The mod ids whose blocks and items may carry a JSON <c>handbookGroup</c> (Apply's jsonDomain). Replaced
+        /// whole under <c>gate</c> and read under it too, and not <c>volatile</c>: Attribute Rendering Library's code
+        /// scanner cannot read a volatile field and logs an error for every mod carrying this file.
         /// </summary>
         private static string[] jsonDomains = Array.Empty<string>();
 
@@ -61,8 +61,7 @@ namespace UniversalDisplayLib.Handbook
         /// Group this block's or item's handbook pages. <paramref name="groupKey"/>: stacks with the same answer share a page
         /// (null = one page for all of them). <paramref name="title"/>: the page's name from its first stack (null = the
         /// block's or item's own name). <paramref name="extraStacks"/>: stacks that get handbook pages (joining their groups)
-        /// WITHOUT being in the creative tab - every metal on a figurine's page while creative shows a few (Codex for Calm,
-        /// 2026-10-15).
+        /// WITHOUT being in the creative tab - every metal on a figurine's page while creative shows a few.
         /// </summary>
         public static void Register(CollectibleObject collectible, System.Func<ItemStack, string> groupKey = null, System.Func<ItemStack, string> title = null,
             IEnumerable<ItemStack> extraStacks = null)
@@ -124,8 +123,8 @@ namespace UniversalDisplayLib.Handbook
         }
 
         /// <summary>
-        /// The same, worked out for the page's own stack - so one item's pages can differ: a collector figurine's page leaves
-        /// out the metals it could be cast in (Calm, 2026-10-16). On a grouped page it is the stack the page opened on.
+        /// The same, worked out for the page's own stack, so one item's pages can differ: a collector figurine's page
+        /// leaves out the metals it could be cast in. On a grouped page it is the stack the page opened on.
         /// </summary>
         public static void AddSection(CollectibleObject collectible, string title, System.Func<ICoreClientAPI, ItemStack, string> text)
         {

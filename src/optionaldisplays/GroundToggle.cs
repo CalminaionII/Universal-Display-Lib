@@ -13,9 +13,8 @@ using Vintagestory.API.Server;
 namespace UniversalDisplayLib.OptionalDisplays
 {
     /// <summary>
-    /// The place key in its default mode (GroundSettings.PlaceKey "Toggle", Calm 2026-10-16: "not a hold basically a key
-    /// to keep it on, so one press on one off"): a rebindable hotkey switches ground placement on and off, so Shift and
-    /// Ctrl stay free for raising and turning (and for the game). While on, the ghost shows and right-click puts an item
+    /// The place key in its default mode: a rebindable hotkey switches ground placement on and off, so Shift and Ctrl
+    /// stay free for raising and turning (and for the game). While on, the ghost shows and right-click puts an item
     /// down this mod's way.
     ///
     /// The SERVER must know too - placing happens there - so each change travels as a packet, and the server keeps the
@@ -98,11 +97,11 @@ namespace UniversalDisplayLib.OptionalDisplays
                 return true;
             });
 
-            // THE CLICK, CAUGHT BEFORE THE GAME SEES IT (2026-10-16). Riding the game's own routes failed: block-shaped items
-            // go to block placement, a bowl handles its own right-click, and hooking placement crashed the client. While
-            // the toggle is on and the aim is a spot a pile would go (the same check the ghost uses), the right-click is
-            // this mod's and the server is asked to place. Any other click is left alone - an existing pile, a chiselled
-            // block carrying a pile's boxes and everything else answer it themselves.
+            // THE CLICK, CAUGHT BEFORE THE GAME SEES IT. The game's own routes do not work: block-shaped items go to
+            // block placement, a bowl handles its own right-click, and hooking placement crashes the client. While the
+            // toggle is on and the aim is a spot a pile would go (the same check the ghost uses), the right-click is
+            // this mod's and the server is asked to place. Any other click is left alone - an existing pile, a
+            // chiselled block carrying a pile's boxes and everything else answer it themselves.
             capi.Event.MouseDown += e =>
             {
                 if (e.Handled || e.Button != EnumMouseButton.Right || !ClientOn) return;

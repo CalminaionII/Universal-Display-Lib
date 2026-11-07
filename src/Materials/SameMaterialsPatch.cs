@@ -4,16 +4,16 @@ using Vintagestory.API.Common;
 namespace UniversalDisplayLib.Materials
 {
     /// <summary>
-    /// THE PLANKS MUST BE THE BLOCK'S WOOD, enforced on the game's own recipe check. A first version listened to
-    /// api.Event.MatchesGridRecipe and answered false, and the craft went through anyway (server-audit.log, both test
-    /// rounds) - the game's code that calls that event is not public, but a C# event with several listeners hands back
-    /// only the LAST listener's answer, so another mod's "true" can override ours. This postfix on vsapi
-    /// GridRecipe.Matches cannot be overridden that way, and it only runs for a recipe whose pattern already matched
-    /// (not for every recipe the grid tests - the lag).
+    /// The planks must be the block's wood, enforced on the game's own recipe check. Answering false from
+    /// api.Event.MatchesGridRecipe does not work: the craft goes through anyway, because a C# event with several
+    /// listeners hands back only the last listener's answer, so another mod's "true" can override ours. This postfix on
+    /// vsapi GridRecipe.Matches cannot be overridden that way, and it only runs for a recipe whose pattern already
+    /// matched, not for every recipe the grid tests.
     ///
-    /// Harmony patches are process-wide, so in singleplayer client and server share ONE patch: it is applied by the
+    /// Harmony patches are process-wide, so in single player client and server share one patch: it is applied by the
     /// first MaterialsSystem to start and removed by the last to stop, and the side comes from the world it is given.
-    /// Each mod carrying the kit applies its own copy under its own Harmony id; each copy only judges its own mod's recipes.
+    /// Each mod carrying the kit applies its own copy under its own Harmony id, and each copy only judges its own mod's
+    /// recipes.
     /// </summary>
     public static class SameMaterialsPatch
     {

@@ -22,8 +22,7 @@ namespace UniversalDisplayLib
     /// surfaces, then let the trace evaluate one with fewer, and it indexes past the end:
     /// IndexOutOfRangeException from the render thread, which takes the client down.
     ///
-    /// It is a latent bug in vanilla — two vanilla display blocks with differing surface
-    /// counts can do it unaided. Our blocks make it far likelier: we deliberately kept our
+    /// It is a latent bug in vanilla. Our blocks make it likelier: we keep our
     /// slot ids format-identical to vanilla's so its decoder parses them, and we ship
     /// three-surface blocks (the display unit and the vanilla pane shelf).
     ///

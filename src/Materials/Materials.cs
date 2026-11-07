@@ -46,17 +46,17 @@ namespace UniversalDisplayLib.Materials
         public Dictionary<string, string[]> Overlays { get; set; } = new();
 
         /// <summary>
-        /// On a <c>*</c> entry: its item pattern only answers for codes the file LISTS (Calm, 2026-10-14 - support beams for
-        /// Wooden Display Shelves' frames: <c>game:supportbeam-{code}</c> also matches rotten and very rotten beams, whose
-        /// textures exist, and those are not frame woods). Off: any code whose textures exist.
+        /// On a <c>*</c> entry: its item pattern only answers for codes the file lists. For example
+        /// <c>game:supportbeam-{code}</c> also matches rotten and very rotten beams, whose textures exist, and those
+        /// are not frame woods. Off: any code whose textures exist.
         /// </summary>
         public bool ListedOnly { get; set; }
 
         /// <summary>
-        /// Which mod this material belongs to, for the handbook's by-mod lists and the per-mod creative stacks (SourceOf).
-        /// Optional - without it, the domain of its <c>item</c>. For a mod that puts its items in the game's namespace
-        /// (Calm, 2026-10-14: Pewter's rods are game:rod-pewter, "and pewter can have add ons for other metals"): its patch
-        /// writes <c>"source": "pewter"</c>, each add-on its own mod id.
+        /// Which mod this material belongs to, for the handbook's by-mod lists and the per-mod creative stacks
+        /// (SourceOf). Optional; without it, the domain of its <c>item</c>. For a mod that puts its items in the game's
+        /// namespace (Pewter's rods are game:rod-pewter): its patch writes <c>"source": "pewter"</c>, each add-on its
+        /// own mod id.
         /// </summary>
         public string Source { get; set; }
 
@@ -155,13 +155,12 @@ namespace UniversalDisplayLib.Materials
         // ---------- the planks must be the window's wood ----------
 
         /// <summary>
-        /// A recipe that copies its materials from a block in the grid (copyAttributesFrom - the Display Unit
-        /// Window from an awning, the vanilla pane shelf from a vanilla pane window) takes only the planks of
-        /// THAT block's wood (Calm, 2026-10-09: "is there a way to make this only take the correct boards?").
-        /// Any ingredient that IS a material (a material's `item`, e.g. game:plank-pine = wood pine) must be
-        /// the material the block carries for that kind. Only for recipes whose output uses the kit's materials behaviour. Both
-        /// sides, so the grid's output preview agrees with the server. Called from SameMaterialsPatch (a postfix on
-        /// GridRecipe.Matches) - NOT the MatchesGridRecipe event, whose "no" was overridden in game.
+        /// A recipe that copies its materials from a block in the grid (copyAttributesFrom: the Display Unit Window
+        /// from an awning, the vanilla pane shelf from a vanilla pane window) takes only the planks of that block's
+        /// wood. Any ingredient that is a material (a material's `item`, e.g. game:plank-pine = wood pine) must be the
+        /// material the block carries for that kind. Only for recipes whose output uses the kit's materials behaviour.
+        /// Both sides, so the grid's output preview agrees with the server. Called from SameMaterialsPatch (a postfix
+        /// on GridRecipe.Matches), not the MatchesGridRecipe event, whose "no" gets overridden.
         /// </summary>
         internal bool SameMaterialsInGrid(IPlayer player, GridRecipe recipe, ItemSlot[] ingredients, int gridWidth)
         {
@@ -197,10 +196,10 @@ namespace UniversalDisplayLib.Materials
         private readonly Dictionary<string, Dictionary<string, (string kind, string code)>> itemIndex = new();
 
         /// <summary>
-        /// Which material an ingredient item IS, from the materials' <c>item</c> (game:plank-pine -> wood, pine); a <c>*</c>
-        /// entry's pattern answers unlisted ones. FOR A BLOCK OF <paramref name="domain"/> (2026-10-10): that mod's own
-        /// materials first, as drawing and the creative tab already did - two mods may give one code different items
-        /// (Glass Display Shelves' metals are rods, Metal Windows' are plates), and the shared pool knew only the first.
+        /// Which material an ingredient item is, from the materials' <c>item</c> (game:plank-pine -> wood, pine); a
+        /// <c>*</c> entry's pattern answers unlisted ones. For a block of <paramref name="domain"/>: that mod's own
+        /// materials first, as drawing and the creative tab do, because two mods may give one code different items
+        /// (Glass Display Shelves' metals are rods, Metal Windows' are plates).
         /// </summary>
         public bool TryMaterialOfItem(AssetLocation itemCode, out string kind, out string code, string domain = null)
         {
@@ -220,8 +219,8 @@ namespace UniversalDisplayLib.Materials
                 }
                 if (index.TryGetValue(key, out var found)) { (kind, code) = found; return true; }
 
-                // Not listed: the `*` patterns (the mod's own first), answered ONCE per item code - the crafting grid asks
-                // this for every recipe it tests (Calm, 2026-10-09: "the crafting grid has become incredibly laggy").
+                // Not listed: the `*` patterns (the mod's own first), answered once per item code, because the crafting
+                // grid asks this for every recipe it tests.
                 string askedKey = scope + "|" + key;
                 if (!notListed.TryGetValue(askedKey, out var answer))
                 {
@@ -328,11 +327,11 @@ namespace UniversalDisplayLib.Materials
         }
 
         /// <summary>
-        /// Every texture that carries an OVERLAY, made into the block atlas at load too (Calm, 2026-10-09 - "anything that could
-        /// cause stutter"): the plank pane window darkens EVERY wood and very aged wood dusts the glass, and each of those is a
-        /// new combined texture - made on the main thread, one at a time, the first time a window needed it, so new windows
-        /// hitched while playing. Each block's texture codes are resolved for every listed material of the kind that fills
-        /// them, with and without each material that adds an overlay there - the same Resolve the build uses, so the keys match.
+        /// Every texture that carries an overlay, made into the block atlas at load too, so new windows do not hitch
+        /// during play. The plank pane window darkens every wood and very aged wood dusts the glass, and each of those
+        /// is a new combined texture. Each block's texture codes are resolved for every listed material of the kind
+        /// that fills them, with and without each material that adds an overlay there, using the same Resolve as the
+        /// build so the keys match.
         /// </summary>
         private void PrepareOverlays(ICoreClientAPI capi)
         {
@@ -343,8 +342,8 @@ namespace UniversalDisplayLib.Materials
             {
                 var behaviour = block?.GetBehavior<BlockBehaviorMaterials>();
                 if (behaviour == null) continue;
-                // blocks of one blocktype share their slots / fixed / overlays - each set is worked through once, PER MOD
-                // (2026-10-10): the same set in another mod can resolve to that mod's own materials and textures
+                // Blocks of one blocktype share their slots, fixed textures and overlays, so each set is worked through
+                // once per mod: the same set in another mod can resolve to that mod's own materials and textures.
                 string signature = (block.Code?.Domain ?? "") + "@" + string.Join("|", behaviour.Slots.Select(s => s.Key + ":" + string.Join(",", s.Value.Select(r => r.Key + "=" + r.Value))))
                     + "#" + string.Join(",", behaviour.Fixed.Select(f => f.Key + "=" + f.Value))
                     + "#" + string.Join(",", behaviour.Overlays.Select(o => o.Key + "=" + string.Join("+", o.Value ?? Array.Empty<string>())));
@@ -467,10 +466,11 @@ namespace UniversalDisplayLib.Materials
             return string.IsNullOrEmpty(def?.Item) ? "game" : new AssetLocation(def.Item).Domain;
         }
 
-        /// <summary>The most material sets a handbook page flips through - its recipe copies and its drop alike.</summary>
-        /// <remarks>1: no cycling - the recipe shows the page's own materials and the drop is the page's own item (Calm, 2026-10-14:
-        /// "Drop the cycling, just show the page's own pair" - the materials list says what can be used). Raise it to cycle again
-        /// (it was 1024, then 64 after the handbook lagged).</remarks>
+        /// <summary>
+        /// The most material sets a handbook page flips through: its recipe copies and its drop alike.
+        /// </summary>
+        /// <remarks>1: no cycling. The recipe shows the page's own materials and the drop is the page's own item, and
+        /// the materials list says what can be used. Raise it to cycle again.</remarks>
         public const int MaxHandbookCycle = 1;
 
         /// <summary>The material recipe (MaterialRecipes) that makes this block or item, or null.</summary>
@@ -501,7 +501,7 @@ namespace UniversalDisplayLib.Materials
         public List<Dictionary<string, string>> CycleCombos(IWorldAccessor world, IList<string> kinds, string domain, IReadOnlyDictionary<string, string> start, int max)
         {
             if (kinds == null || kinds.Count == 0 || max <= 0) return new List<Dictionary<string, string>>();
-            // worked out once per question - the handbook asks this for every block on every page open (2026-10-14 lag)
+            // Worked out once per question: the handbook asks this for every block on every page open.
             string cacheKey = (domain ?? "") + "|" + string.Join(",", kinds) + "|" + BlockBehaviorMaterials.KeyOf(start) + "|" + max;
             lock (cycleCache)
             {
@@ -533,9 +533,8 @@ namespace UniversalDisplayLib.Materials
             }
 
             var startCombo = start != null && kinds.All(k => start.ContainsKey(k)) ? kinds.ToDictionary(k => k, k => start[k]) : null;
-            // EACH SOURCE ITS OWN CYCLE (Calm, 2026-10-14: "Vanilla shows vanilla and vanilla varnished shows its own, so you
-            // know the added mod is working"): per kind, only the materials from the same mod as the start's (SourceOf - the
-            // domain of the material's item)
+            // Each source its own cycle, so the player can see an added mod is working: per kind, only the materials
+            // from the same mod as the start's (SourceOf, the domain of the material's item).
             if (startCombo != null)
                 foreach (var kind in kinds)
                 {
@@ -636,13 +635,13 @@ namespace UniversalDisplayLib.Materials
         {
             string domain = collectible.Code?.Domain;
             var recipe = MaterialRecipeFor(capi.World, collectible);
-            // Made by grid recipes that pick no material - stacked from blocks that already carry theirs (tall windows,
-            // Calm 2026-10-15: "it doesnt need to say what is used as they are stacked"): no line, theirs says it.
+            // Made by grid recipes that pick no material, stacked from blocks that already carry theirs (tall windows):
+            // no line, theirs says it.
             if (recipe == null && capi.World.GridRecipes?.Any(r => r?.Output?.ResolvedItemStack?.Collectible == collectible) == true) return null;
             var slots = ((collectible as Block)?.GetBehavior<BlockBehaviorMaterials>()?.Slots.Keys
                          ?? collectible.GetCollectibleBehavior<CollectibleBehaviorMaterials>(true)?.Slots.Keys)?.ToList() ?? new List<string>();
-            // every kind the block holds, not only the recipe's letters - a window's glass comes in on its pane, and a mod
-            // may add glass too (Calm, 2026-10-15)
+            // Every kind the block holds, not only the recipe's letters: a window's glass comes in on its pane, and a
+            // mod may add glass too.
             var kinds = recipe != null ? slots.Concat(MaterialRecipes.LettersOf(recipe).Values).Distinct().ToList() : slots;
             if (kinds.Count == 0) return null;
             var lines = kinds.Select(kind => (kind, mods: InstalledSources(capi, kind, domain))).Where(l => l.mods.Count > 0).ToList();
@@ -699,7 +698,7 @@ namespace UniversalDisplayLib.Materials
             int made = 0;
             foreach (var block in api.World.Collectibles)
             {
-                // one block's trouble must not stop the rest (2026-10-15: a crash here left every window without its stacks)
+                // One block's trouble must not stop the rest.
                 try { made += MakeStacks(api, block); }
                 catch (Exception e) { api.Logger.Error("[Materials Kit] Could not make the creative / handbook stacks of {0}: {1}", block?.Code, e); }
             }
@@ -722,8 +721,8 @@ namespace UniversalDisplayLib.Materials
                 }
                 // an item only when it asks (its creative list may be hand-made)
                 if ((behaviour == null && itemBehaviour?.ShowSet != true) || block.CreativeInventoryStacks == null) return 0;
-                // the block's settings, else the item's - never "block's ?? item's": a block with no showMaterials (null) has no
-                // item behaviour to fall back to (2026-10-15: that crashed the whole creative phase on the first window)
+                // The block's settings, else the item's. Never "block's ?? item's": a block with no showMaterials
+                // (null) has no item behaviour to fall back to.
                 var creative = behaviour != null ? behaviour.CreativeShow : itemBehaviour.CreativeShow;
                 var handbook = behaviour != null ? behaviour.HandbookShow : itemBehaviour.HandbookShow;
                 var only = behaviour != null ? behaviour.ShowMaterials : itemBehaviour.ShowMaterials;
@@ -896,26 +895,24 @@ namespace UniversalDisplayLib.Materials
         // ---------- recipes made from the materials ----------
 
         /// <summary>
-        /// A NEW MATERIAL NEEDS NO RECIPE FILE (Calm, 2026-10-08: "easy to add in new woods"). A recipe is
-        /// a TEMPLATE when its output carries <c>types: { "&lt;kind&gt;": "{&lt;name&gt;}" }</c> and an ingredient
-        /// carries that <c>name</c> - the game's own placeholder recipes, e.g. a window from any
-        /// <c>game:plank-*</c>. For every material of that kind whose <c>item</c> fits the ingredient's
-        /// pattern but lives in ANOTHER domain (<c>bdtree:plank-ash</c> against <c>game:plank-*</c>), the
-        /// template is copied with that domain's ingredient and <c>allowedVariants</c> = those materials'
-        /// codes - one copy per domain, so a wood mod's whole range is one recipe per window.
+        /// A new material needs no recipe file. A recipe is a template when its output carries <c>types: {
+        /// "&lt;kind&gt;": "{&lt;name&gt;}" }</c> and an ingredient carries that <c>name</c>: the game's own
+        /// placeholder recipes, e.g. a window from any <c>game:plank-*</c>. For every material of that kind whose
+        /// <c>item</c> fits the ingredient's pattern but lives in another domain (<c>bdtree:plank-ash</c> against
+        /// <c>game:plank-*</c>), the template is copied with that domain's ingredient and <c>allowedVariants</c> =
+        /// those materials' codes, one copy per domain, so a wood mod's whole range is one recipe per window.
         ///
-        /// The copies are written into the template's own recipe asset, in memory, before the game reads
-        /// recipes (vssurvivalmod RecipeLoader, recipes/grid, server, ExecuteOrder 1; this runs at 0.1,
-        /// after JsonPatchLoader 0.05 - so materials added by patches count). The pattern match keeps
-        /// ingredients that are not the material's item out of it (the leaded-pane routes name the wood
-        /// on a glass pane, not a plank). The game fills {name} from the wildcard, so a copy is made only
-        /// where the item's wildcard part IS the material's code.
+        /// The copies are written into the template's own recipe asset, in memory, before the game reads recipes
+        /// (vssurvivalmod RecipeLoader, recipes/grid, server, ExecuteOrder 1; this runs at 0.1, after JsonPatchLoader
+        /// 0.05, so materials added by patches count). The pattern match keeps ingredients that are not the material's
+        /// item out of it (the leaded-pane routes name the wood on a glass pane, not a plank). The game fills {name}
+        /// from the wildcard, so a copy is made only where the item's wildcard part is the material's code.
         /// </summary>
         private void MakeRecipes(ICoreAPI api)
         {
-            // ONLY recipes for blocks that use the kit's materials behaviour (found 2026-10-08: the old Window Storage mod's
-            // recipes have the same "any plank -> {wood}" shape and were being copied for bdtree too).
-            // Blocks are not built yet at this point, so their blocktype files are read for the behaviour.
+            // Only recipes for blocks that use the kit's materials behaviour: another mod's recipes can have the same
+            // "any plank -> {wood}" shape. Blocks are not built yet at this point, so their blocktype files are read
+            // for the behaviour.
             var ours = BlockCodesUsingMaterials(api);
             if (ours.Count == 0) return;
             int made = 0, files = 0;
@@ -997,9 +994,9 @@ namespace UniversalDisplayLib.Materials
             if (recipe["ingredients"] is not JObject ingredients) return result;
 
             // (kind, ingredient name) pairs: the output's {placeholders}; and, for a recipe that copies its materials
-            // from a block in the grid (the Display Unit Window, the vanilla pane shelf - Calm 2026-10-09: planks of
-            // the window's wood), an ingredient NAMED after a kind ("name": "wood") - so a wood mod gets a copy taking
-            // its own planks, and SameMaterialsInGrid holds them to the block's wood.
+            // from a block in the grid (the Display Unit Window, the vanilla pane shelf), an ingredient named after a
+            // kind ("name": "wood"), so a wood mod gets a copy taking its own planks and SameMaterialsInGrid holds them
+            // to the block's wood.
             var pairs = new List<(string kind, string name)>();
             if (recipe["output"]?["attributes"]?["types"] is JObject types)
                 foreach (var typeProp in types.Properties())

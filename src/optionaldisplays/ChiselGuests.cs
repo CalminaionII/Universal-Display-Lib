@@ -15,16 +15,16 @@ namespace UniversalDisplayLib.OptionalDisplays
     /// <summary>
     /// ITEMS SUNK INTO A CHISELLED BLOCK STAY AIMABLE. A pile on a chiselled top draws its items down inside the
     /// chiselled block's space (the lib's followSupport), but the game's aiming only tests a block's own boxes when the
-    /// ray passes through that block's space - so aimed at from the side, the chiselled block won and the item could only
-    /// be reached from its top (Calm, 2026-10-16: "you have to look at the top of the placed thing").
+    /// ray passes through that block's space - so aimed at from the side, the chiselled block won and the item could
+    /// only be reached from its top.
     ///
-    /// So the chiselled block carries the pile's boxes as GUESTS - the lib's own mechanism between its blocks
-    /// (ids "guest:0,1,0:&lt;id&gt;", read by BEUniversalDisplay.GuestSelection / WindowSelection) - and hands a click or a
+    /// So the chiselled block carries the pile's boxes as GUESTS - the lib's own mechanism between its blocks (ids
+    /// "guest:0,1,0:&lt;id&gt;", read by BEUniversalDisplay.GuestSelection / WindowSelection) - and hands a click or a
     /// break on one to the pile. Its own voxel boxes stay first and unchanged.
     ///
-    /// NOT WHILE A CHISEL IS HELD (client): the chisel works out the voxel from the aimed box's index, so it must only ever
-    /// see the chiselled block's own boxes. The server always adds them; the voxel indices are the same either way, the
-    /// guests only ever come after them.
+    /// NOT WHILE A CHISEL IS HELD (client): the chisel works out the voxel from the aimed box's index, so it must only
+    /// ever see the chiselled block's own boxes. The server always adds them; the voxel indices are the same either
+    /// way, the guests only ever come after them.
     /// </summary>
     public static class ChiselGuests
     {
@@ -53,7 +53,7 @@ namespace UniversalDisplayLib.OptionalDisplays
                 return;
 
             // What the info box and the help say: the pile's (and its aimed item's), as the lib does for items under a
-            // shelf (Calm: "It is targetting it but like the issue when stacking before with a shelf on top no info").
+            // shelf.
             MethodInfo name = typeof(BlockMicroBlock).GetMethod(nameof(Block.GetPlacedBlockName), new[] { typeof(IWorldAccessor), typeof(BlockPos) });
             MethodInfo info = typeof(Block).GetMethod(nameof(Block.GetPlacedBlockInfo), new[] { typeof(IWorldAccessor), typeof(BlockPos), typeof(IPlayer) });
             MethodInfo help = typeof(BlockChisel).GetMethod(nameof(Block.GetPlacedBlockInteractionHelp), new[] { typeof(IWorldAccessor), typeof(BlockSelection), typeof(IPlayer) });

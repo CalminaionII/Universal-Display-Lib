@@ -257,10 +257,9 @@ public partial class BEUniversalDisplay
         => a.SurfaceIndex == b.SurfaceIndex && a.X == b.X && a.Z == b.Z;
 
     /// <summary>
-    /// FIT SLACK (lib 1.3.1, Calm: "be looser with how the surfaces count the items as going into another box ... some
-    /// items should go but the box is a touch too big"). Every fit check lets an item's box reach up to half a voxel
-    /// into another item, a surface edge, a carved wall or a block above - measured boxes come out a little larger than
-    /// what the eye sees. Only the CHECKS use it; the item is drawn and placed at its own size.
+    /// FIT SLACK. Every fit check lets an item's box reach up to half a voxel into another item, a surface edge, a
+    /// carved wall or a block above - measured boxes come out a little larger than what the eye sees. Only the CHECKS
+    /// use it; the item is drawn and placed at its own size.
     /// </summary>
     internal const float FitSlackVoxels = .5f;
     internal const float FitSlack = FitSlackVoxels / 16f;
@@ -279,9 +278,8 @@ public partial class BEUniversalDisplay
     }
 
     /// <summary>
-    /// CHISEL EDITING (trial, Calm 2026-10-19: chisel a block while items are in it, "edit around items"): every stored
-    /// item's box in its host block (block units) and whether it stands on the carved floor itself - an item resting on
-    /// another item (a stack or free stack) has nothing in the carving to lose.
+    /// CHISEL EDITING: every stored item's box in its host block (block units) and whether it stands on the carved
+    /// floor itself - an item resting on another item (a stack or free stack) has nothing in the carving to lose.
     /// </summary>
     internal List<(Cuboidf Box, bool OnFloor)> EmbeddedItemFootprints()
     {
@@ -334,7 +332,11 @@ public partial class BEUniversalDisplay
     // resolves collectibles, enumerates the inventory, or creates embedded displays.
     void RefreshEmbeddedMeshes()
     {
-        if (!IsEmbedded || capi == null || _removed || (!embeddedDirty && meshesGenerated)) return;
+        if (!IsEmbedded || capi == null || _removed) return;
+        // the levitating display (LevitatingDisplay.cs): start or stop the moving copies first, so the mesh below leaves
+        // out the ones drawn moving. Here because this is the embedded display's client tick and runs after every sync.
+        UpdateHovers();
+        if (!embeddedDirty && meshesGenerated) return;
         try
         {
             var sink = new EmbeddedMeshSink();

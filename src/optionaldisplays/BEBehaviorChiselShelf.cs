@@ -137,7 +137,8 @@ public sealed class BEBehaviorChiselShelf : BlockEntityBehavior
         publishedLight = light?.Length >= 3 ? new[] { light[0], light[1], light[2] } : null;
         publishedParticles = particles;
         if (!changed) return;
-        if ((previous?[2] ?? 0) > 0 && (publishedLight?[2] ?? 0) == 0)
+        // dimmer or another colour, not only none: the relight below only adds light (as on any display)
+        if (BEUniversalDisplay.LightMustBeCleared(previous, publishedLight))
             Api.World.BlockAccessor.RemoveBlockLight(previous, Pos);
         // Keep the real microblock and its entity. This also refreshes the particle gate.
         Api.World.GetBlockAccessor(false, true, false).ExchangeBlock(block.Id, Pos.Copy());
@@ -232,16 +233,16 @@ public sealed class BEBehaviorChiselShelf : BlockEntityBehavior
         var target = aimed?.Position == null ? null : BEUniversalDisplay.At(Api.World.BlockAccessor, aimed.Position);
         (target is { IsEmbedded: true } ? target : Display)?.GetBlockInfo(player, text);
     }
-    public override void OnBlockBroken(IPlayer player = null) => Finish(true, player);
-    public override void OnBlockRemoved() => Finish(true, null);
-    public override void OnBlockUnloaded() => Finish(false, null);
+    public override void OnBlockBroken(IPlayer player = null) => Finish(true);
+    public override void OnBlockRemoved() => Finish(true);
+    public override void OnBlockUnloaded() => Finish(false);
     public void DropStored()
     {
         if (Display == null || Api.Side != EnumAppSide.Server) return;
         Display.Inventory.DropAll(Pos.ToVec3d().Add(.5, .5, .5));
         Display.OnContentsChanged();
     }
-    void Finish(bool drop, IPlayer player)
+    void Finish(bool drop)
     {
         if (ended) return;
         ended = true;

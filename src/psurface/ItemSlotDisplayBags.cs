@@ -4,14 +4,14 @@ using Vintagestory.GameContent;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// The display slot every Universal Display surface uses: the game's own <see cref="ItemSlotDisplay"/>, which also takes
-    /// a bag with things in it (lib 1.3.1, Calm 2026-10-21 - a player asked).
+    /// The display slot every Universal Display surface uses: the game's own <see cref="ItemSlotDisplay"/>, which also
+    /// takes a bag with things in it.
     ///
-    /// ItemSlotDisplay is an ItemSlotSurvival, and that refuses any non-empty bag outright ("can hold everything except full
-    /// backpacks", vsapi Common/Inventory/ItemSlotSurvival.cs) - the same rule that keeps a full bag out of the hotbar. A
-    /// player can still scroll the selection onto a bag slot, so the ghost showed and the placing then failed. For a full
-    /// bag these checks are ItemSlot's own instead (storage kind, locks, free space); anything else goes to the game's as
-    /// before. The contents live in the bag's own stack attributes, so it comes back off as it went on - as vanilla
+    /// ItemSlotDisplay is an ItemSlotSurvival, and that refuses any non-empty bag outright ("can hold everything except
+    /// full backpacks", vsapi Common/Inventory/ItemSlotSurvival.cs) - the same rule that keeps a full bag out of the
+    /// hotbar. A player can still scroll the selection onto a bag slot, so the ghost would show and the placing fail.
+    /// For a full bag these checks are ItemSlot's own instead (storage kind, locks, free space); anything else goes to
+    /// the game's. The contents live in the bag's own stack attributes, so it comes back off as it went on - as vanilla
     /// ground storage does (its slots are plain ItemSlots with Backpack added).
     /// </summary>
     public class ItemSlotDisplayBags : ItemSlotDisplay

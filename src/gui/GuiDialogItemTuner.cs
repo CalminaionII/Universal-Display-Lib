@@ -53,13 +53,6 @@ namespace UniversalDisplayLib
         private CollectibleObject target;
 
         /// <summary>
-        /// Where the target was picked up. Remembered rather than re-read, because a pinned
-        /// dialog keeps editing one item while the crosshair has moved on — refreshing "the
-        /// block I am looking at now" would redraw the wrong one.
-        /// </summary>
-        private BlockPos targetPos;
-
-        /// <summary>
         /// The display category of the surface the target was picked up from — `windowdisplay`,
         /// `shelf`, someone else's `box`. Captured with the target and NOT re-read, for the same
         /// reason as the position: a pinned dialog goes on editing one item while the crosshair
@@ -114,9 +107,8 @@ namespace UniversalDisplayLib
                 retargetListener = 0;
             }
 
-            // Registered in OnGuiOpened, so it has to go here rather than in Dispose: the
-            // dialog can be opened and closed many times in one session and each open adds
-            // another listener otherwise. Same shape as the event-bus leak the audit found.
+            // Registered in OnGuiOpened, so it has to go here rather than in Dispose: the dialog can be opened and
+            // closed many times in one session and each open adds another listener otherwise.
         }
 
         /// <summary>
@@ -133,16 +125,14 @@ namespace UniversalDisplayLib
             ItemSlot aimedSlot = BlockBehaviorDisplaySurfaces.ResolveEditorTarget(capi);
             CollectibleObject aimed = aimedSlot?.Itemstack?.Collectible;
 
-            // THE TYPE IS PART OF THE IDENTITY, not just of the output. Every piece of clutter
-            // is the same CollectibleObject, so comparing collectibles alone meant pointing at
-            // a different pot never re-adopted - the dialog sat on the first one and quietly
-            // edited that instead. Null for ordinary items, where this is the old comparison.
+            // THE TYPE IS PART OF THE IDENTITY, not just of the output. Every piece of clutter is the same
+            // CollectibleObject, so comparing collectibles alone would never re-adopt a different pot. Null for
+            // ordinary items.
             string aimedType = BlockBehaviorDisplaySurfaces.TypedKeyOf(aimedSlot);
             if (aimed == null || (aimed == target && aimedType == targetType)) return;
 
             target = aimed;
             targetType = aimedType;
-            targetPos = BEUniversalDisplay.WindowSelection(capi.World.BlockAccessor, capi.World.Player?.CurrentBlockSelection)?.Position?.Copy();
             targetCategory = BlockBehaviorDisplaySurfaces.ResolveEditorCategory(capi);
             pinned = false;
             ReadCurrentValues();
@@ -189,14 +179,8 @@ namespace UniversalDisplayLib
 
             // TITLE IS FIXED, AND THE ITEM CODE GOES IN THE BODY.
             //
-            // The title bar is sized by the dialog, not by its text, so a long code was simply
-            // cut off — and shortening the prefix would only move the cliff, since a modded
-            // code like `aculinaryartillery:crock-burned` is longer than anything the bar can
-            // hold whatever precedes it. Below the title it gets the full width of the window
-            // and can say the whole thing.
-            //
-            // The name is the lib's, not a generic one: a tool living inside one mod's library
-            // should say whose it is, which is why the command is `.udedit` too.
+            // The title bar is sized by the dialog, not by its text, so a long code would be cut off. Below the title
+            // it gets the full width of the window and can say the whole thing.
             var c = capi.Gui.CreateCompo(DialogKey, dialog)
                 .AddShadedDialogBG(bg)
                 .AddDialogTitleBar("Universal Display Editor", OnTitleBarClose)
@@ -337,8 +321,7 @@ namespace UniversalDisplayLib
 
         // ── Control handlers ─────────────────────────────────────────────────
         //
-        // Every one of them pins first. Touching a control IS the signal that this is the item
-        // being worked on, which is the rule the author picked over "always follow the aim".
+        // Every one of them pins first. Touching a control is the signal that this is the item being worked on.
 
         private float Parse(string val, float fallback)
             => float.TryParse(val, NumberStyles.Any, CultureInfo.InvariantCulture, out float f) ? f : fallback;

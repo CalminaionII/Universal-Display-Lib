@@ -10,27 +10,18 @@ using Vintagestory.API.MathTools;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// The authoring tools' file output: one paste-ready <c>displayable</c> entry per item,
-    /// carrying both the box size and the transform.
+    /// The authoring tools' file output: one paste-ready <c>displayable</c> entry per item, carrying both the box size
+    /// and the transform.
     ///
-    /// **ONE FILE, NOT TWO.** Sizes and transforms were written separately at first, which was
-    /// wrong for the obvious reason: they are two halves of the SAME patch entry, and an
-    /// author tuning an item produces both within a minute of each other. Splitting them meant
-    /// pasting from two places and hand-merging the braces. The file now emits exactly what
-    /// goes into the patch.
+    /// One file, not two: sizes and transforms are two halves of the SAME patch entry.
     ///
-    /// **The CATEGORY travels with each item.** A block declaring
-    /// <c>psurface0-w16-h4-d16-box</c> reads <c>displayable.box</c>, and that is the whole
-    /// mechanism keeping one mod's display data clear of another's. It cannot be a heading at
-    /// the top of the file — a single session can tune a window item and a box item one after
+    /// **The CATEGORY travels with each item.** A block declaring <c>psurface0-w16-h4-d16-box</c> reads
+    /// <c>displayable.box</c>, and that is the whole mechanism keeping one mod's display data clear of another's. It
+    /// cannot be a heading at the top of the file — a single session can tune a window item and a box item one after
     /// the other, and a heading could only ever be right for one of them.
     ///
-    /// **Moved out of UniversalDisplayLibMod before there was a second caller** — the K cycle was
-    /// the only one until the tuner dialog arrived, and "a value derived in more than one
-    /// place" is this codebase's named recurring bug.
-    ///
-    /// Client side only. Everything here is notes for an author: **nothing is ever read back by
-    /// the mod**, so deleting or editing these files cannot break anything.
+    /// Client side only. Everything here is notes for an author: **nothing is ever read back by the mod**, so deleting
+    /// or editing these files cannot break anything.
     /// </summary>
     public static class TuningFiles
     {
@@ -51,11 +42,9 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Keyed by ITEM **AND CATEGORY**, not by item alone.
         ///
-        /// The same item legitimately wants different numbers on different surfaces — a hammer
-        /// laid flat on a window sill and stood up in someone's box are two different entries
-        /// in two different patch keys, and both are worth keeping. Keying on the collectible
-        /// alone meant tuning it on the second surface silently REPLACED the first, so an
-        /// author lost the earlier pass by doing exactly what the tool invites.
+        /// The same item legitimately wants different numbers on different surfaces — a hammer laid flat on a window
+        /// sill and stood up in someone's box are two different entries in two different patch keys, and both are worth
+        /// keeping. Keyed on the collectible alone, tuning it on the second surface would silently replace the first.
         /// </summary>
         private static readonly Dictionary<(CollectibleObject, string, string), Entry> entries = new();
 
@@ -75,9 +64,7 @@ namespace UniversalDisplayLib
         public static string LogDir => System.IO.Path.Combine(GamePaths.ModConfig, "universaldisplaylib");
 
         /// <summary>
-        /// Renamed from `window-display-entries.txt` with the mod. Nothing reads this file
-        /// back — it is authoring OUTPUT — so there is nothing to migrate, unlike the config.
-        /// An old one left in the folder is simply an old file.
+        /// Nothing reads this file back: it is authoring output, so there is nothing to migrate.
         /// </summary>
         public static string LogPath => System.IO.Path.Combine(LogDir, "display-entries.txt");
 
@@ -100,9 +87,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Clears everything belonging to one world. Called from StartClientSide, because a
-        /// client static outlives the world it describes — the lesson from the four the code
-        /// audit found.
+        /// Clears everything belonging to one world. Called from StartClientSide, because a client static outlives the
+        /// world it describes.
         /// </summary>
         public static void ResetSession()
         {
@@ -171,15 +157,13 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Creates the folder and file at startup so they can be found before anything has been
-        /// tuned — a tool whose output location only exists once it has produced output cannot
-        /// be checked. Never truncates: a previous session's numbers are still someone's work.
+        /// Creates the folder and file at startup so they can be found before anything has been tuned — a tool whose
+        /// output location only exists once it has produced output cannot be checked. Never truncates: a previous
+        /// session's numbers are still someone's work.
         ///
-        /// Also captures the file as it stands, which every save writes back ahead of this
-        /// session's block. **Without that, each session erased the last** — saving rewrites
-        /// rather than appends, so that earlier attempts do not bury the answer, and rewriting
-        /// from the header alone dropped everything from previous sittings. Read ONCE here, not
-        /// per save, or this session's own block folds back in on every change.
+        /// Also captures the file as it stands, which every save writes back ahead of this session's block. Saving
+        /// rewrites rather than appends, so without that each session would erase the last. Read ONCE here, not per
+        /// save, or this session's own block folds back in on every change.
         /// </summary>
         public static void EnsureFile(ICoreClientAPI api)
         {
@@ -211,18 +195,15 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Writes every tuned item as a complete <c>displayable</c> entry, on EVERY change.
         ///
-        /// **Live rather than on close.** The close-only version lost a whole pass on its first
-        /// outing: quitting with the editor still open discarded everything, silently, which is
-        /// the natural way to use the tool. A change is a human action, so rewriting a few
-        /// hundred bytes costs nothing.
+        /// Live rather than on close, or quitting with the editor still open would discard everything. A change is a
+        /// human action, so rewriting a few hundred bytes costs nothing.
         ///
-        /// **The CURRENT state is rewritten, not appended** — appending per change buries the
-        /// answer under thirty near-identical attempts. History across sessions survives because
-        /// <see cref="filePrefix"/> is written back first and startup never truncates.
+        /// **The CURRENT state is rewritten, not appended** — appending per change buries the answer under thirty
+        /// near-identical attempts. History across sessions survives because <see cref="filePrefix"/> is written back
+        /// first and startup never truncates.
         ///
-        /// **A file, not chat:** the game renders chat as VTML, so the braces and quotes of a
-        /// JSON block are parsed as markup. The first version logged *"Found closing tag char
-        /// &gt; but no tag was opened"* four times per line and showed nothing useful.
+        /// **A file, not chat:** the game renders chat as VTML, so the braces and quotes of a JSON block would be
+        /// parsed as markup.
         /// </summary>
         public static void Save(ICoreClientAPI api, bool announce)
         {
@@ -475,29 +456,21 @@ namespace UniversalDisplayLib
             ScaleJson(t));
 
         /// <summary>
-        /// The item's LAST variant value — `copper` for `hammer-copper` — or null when it has
-        /// no variants at all.
+        /// The item's LAST variant value — `copper` for `hammer-copper` — or null when it has no variants at all.
         ///
-        /// `VariantStrict` is an ordered dictionary of variant group to value, filled from the
-        /// item's own `variantgroups`, so the last entry is the one that distinguishes this
-        /// item from its siblings. That is the segment an author reaches for: `*-cookpot`,
-        /// `*-squire`.
+        /// `VariantStrict` is an ordered dictionary of variant group to value, filled from the item's own
+        /// `variantgroups`, so the last entry is the one that distinguishes this item from its siblings. That is the
+        /// segment an author reaches for: `*-cookpot`, `*-squire`.
         /// </summary>
         /// <summary>
-        /// EVERY variant value, in declaration order, joined the way the item code joins them —
-        /// so a trophy of `{animal: bear, grade: standard}` gives `bear-standard` and the key
-        /// written is `*-bear-standard`.
+        /// EVERY variant value, in declaration order, joined the way the item code joins them — so a trophy of
+        /// `{animal: bear, grade: standard}` gives `bear-standard` and the key written is `*-bear-standard`.
         ///
-        /// **It used to return only the LAST value**, which was correct for the single-group
-        /// items this was written against and quietly wrong for anything with two. A trophy
-        /// tuned as a bear wrote `*-standard`, which matches every animal at standard grade —
-        /// so the numbers measured for one item silently applied to fifteen others, and tuning
-        /// a second animal was dropped as a duplicate key. Reported 2026-08-07 by an author who
-        /// noticed only the grade coming out.
+        /// Only the last value would be wrong for an item with two groups: a trophy tuned as a bear would write
+        /// `*-standard`, which matches every animal at standard grade.
         ///
-        /// Order matters and is not assumed lightly: `VariantStrict` enumerates in the order
-        /// the variantgroups are declared, which is the order the code segments appear in, so
-        /// joining them reproduces the code exactly.
+        /// `VariantStrict` enumerates in the order the variantgroups are declared, which is the order the code segments
+        /// appear in, so joining them reproduces the code exactly.
         /// </summary>
         private static string VariantKey(CollectibleObject c)
         {

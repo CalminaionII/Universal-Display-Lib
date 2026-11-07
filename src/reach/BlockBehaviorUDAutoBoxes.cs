@@ -5,12 +5,12 @@ using Vintagestory.API.Datastructures;
 namespace UniversalDisplayLib.Reach
 {
     /// <summary>
-    /// "UDAutoBoxes" - the window settings the AutoBoxes Kit does not have, read from the block's JSON. Rebuilt on
-    /// the kit 2026-10-06; for now only each pane's FALLBACK: the animation it plays instead when its own open
-    /// pose has no room (the External Shutter's leaf folds 90 degrees instead of 180 when something is beside it).
+    /// "UDAutoBoxes" - the window settings the AutoBoxes Kit does not have, read from the block's JSON. For now only
+    /// each pane's FALLBACK: the animation it plays instead when its own open pose has no room (the External Shutter's
+    /// leaf folds 90 degrees instead of 180 when something is beside it).
     ///
-    /// JSON (already in Window Display): "panes": [ { "pane": 0, "fallback": { "animOpen": "rightopen90", "animClose": "rightclosed90" } } ]
-    /// Anything else in it (heightByType, ...) is not read yet.
+    /// JSON (already in Window Display): "panes": [ { "pane": 0, "fallback": { "animOpen": "rightopen90", "animClose":
+    /// "rightclosed90" } } ] Anything else in it (heightByType, ...) is not read yet.
     /// </summary>
     public class BlockBehaviorUDAutoBoxes : BlockBehavior
     {

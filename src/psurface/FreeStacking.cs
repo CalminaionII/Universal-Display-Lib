@@ -45,10 +45,9 @@ public partial class BEUniversalDisplay
     bool HasFreeChildren(string id) => freeStacks.Values.Any(row => row.Parent == id);
 
     /// <summary>
-    /// TOP ITEM FIRST (Calm, 2026-10-19: "you have to take the top item of the stack off ... should work on all of
-    /// them"): an item with anything resting on it cannot be taken or raised/lowered until what is on top is off -
-    /// free-stacked children, and in stacks from before 1.3.1 the items above it in its column. Turning it is
-    /// allowed (Calm: "turning is fine"). Every display: shelves, windows, ground, carved floors.
+    /// TOP ITEM FIRST: an item with anything resting on it cannot be taken or raised/lowered until what is on top is
+    /// off - free-stacked children, and in older stacks the items above it in its column. Turning it is allowed. Every
+    /// display: shelves, windows, ground, carved floors.
     /// </summary>
     bool RefuseFreeSupportEdit(string id)
     {
@@ -85,17 +84,16 @@ public partial class BEUniversalDisplay
             || !inv.SlotsByslotId.TryGetValue(aimed.Encoded, out var supportSlot) || supportSlot is not { Empty: false }) return false;
         var support = BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(supportSlot, surface.DisplayCategory);
         if (support?.Size == null) return false;
-        // Starts FACING THE PLAYER like a first placement, not at the angle of the item below (Calm, 2026-10-19:
-        // "They dont have to face the same way as the first item ... Or the item below in general"). A turn chosen
-        // with Sprint + wheel before placing still wins (ForSurface returns it).
+        // Starts FACING THE PLAYER like a first placement, not at the angle of the item below. A turn chosen with
+        // Sprint + wheel before placing still wins (ForSurface returns it).
         rotation = PlacementRotation.ForSurface(Api, player, this, surface);
         var point = FreeStackPoint(selection.HitPosition, surface);
         // The fine placement grid (server precise-placement rule); no forced centre snap.
         float grid = ServerRules.PrecisePlacementOn ? 2f : 1f;
         float x = (float)Math.Round(point.X*grid)/grid, z = (float)Math.Round(point.Z*grid)/grid;
-        // OVERHANG ALLOWED (Calm, 2026-10-19): the item goes where it is aimed on the item below, even if it hangs
-        // over its edges - it only has to stay on the display surface and clear of other items (FreePlacementFits).
-        // IDs must not contain negative coordinates (legacy decoder uses '-').
+        // OVERHANG ALLOWED: the item goes where it is aimed on the item below, even if it hangs over its edges - it
+        // only has to stay on the display surface and clear of other items (FreePlacementFits). IDs must not contain
+        // negative coordinates (legacy decoder uses '-').
         x = Math.Max(0, x); z = Math.Max(0, z);
         target = new DisplaySlotId { SurfaceIndex=aimed.SurfaceIndex, X=x, Z=z, Y=aimed.Y+1, IsPlacedItem=true };
         while (inv.SlotsByslotId.TryGetValue(target.Encoded, out var occupied) && occupied is { Empty: false }) target=target.UpCopy();
@@ -111,7 +109,6 @@ public partial class BEUniversalDisplay
         var surface = SurfaceBehavior?.GetSurface(loc?.SurfaceIndex ?? -1);
         if (record == null || surface == null || attr?.Size == null
             || !inv.SlotsByslotId.TryGetValue(record.Parent, out var parentSlot) || parentSlot is not { Empty:false }) return false;
-        var parentLoc = DisplaySlotId.Decode(record.Parent);
         var parent = BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(parentSlot, surface.DisplayCategory);
         if (parent?.Size == null) return false;
         var size = BlockBehaviorDisplaySurfaces.RotatedFootprint(attr.Size, rotation + SurfaceFacingDeg(surface));

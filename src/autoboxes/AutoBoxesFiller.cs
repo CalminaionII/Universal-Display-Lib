@@ -10,23 +10,22 @@ using Vintagestory.GameContent;   // UDL: ICustomSelectionBoxRender
 namespace UniversalDisplayLib;   // CHANGE: the namespace your own code files use (the word after "namespace" at their top)
 
 /// <summary>
-/// The filler (<c>yourmod:autoboxesfiller</c>) - an invisible block in a space its owner's box reaches into.
-/// Draws nothing, is solid only where its owner says so (its own piece of the box), gives the owner's box as its outline, and passes
-/// a click, a break, the name, the info and the help on to the owner as if the owner's own block
-/// had been aimed at. Placed and removed only by <see cref="AutoBoxes"/>; drops nothing.
+/// The filler (<c>yourmod:autoboxesfiller</c>) - an invisible block in a space its owner's box reaches into. Draws
+/// nothing, is solid only where its owner says so (its own piece of the box), gives the owner's box as its outline, and
+/// passes a click, a break, the name, the info and the help on to the owner as if the owner's own block had been aimed
+/// at. Placed and removed only by <see cref="AutoBoxes"/>; drops nothing.
 ///
-/// UNIVERSAL DISPLAY LIB'S COPY differs from the kit (Tools/AutoBoxes Kit) in places marked "UDL:" (2026-10-06/07):
-/// only the box aimed at is outlined (a tall window's two leaves are two outlines), a filler that is only solid there
-/// (no outline) still counts as owned on reload, and in its owner's OWN spaces (a tall window's upper blocks -
-/// IAutoBoxesPartOfOwner) it seals rooms and holds torches exactly as the owner's own block does, open or shut, it
-/// sounds like its owner when hit or broken, and a space can be SHARED by more than one owner (two shutters folding into one
-/// gap): every sharer's boxes show and are solid there, and a click or break goes to the one whose box is aimed at.
+/// UNIVERSAL DISPLAY LIB'S COPY differs from the kit (Tools/AutoBoxes Kit) in places marked "UDL:": only the box aimed
+/// at is outlined (a tall window's two leaves are two outlines), a filler that is only solid there (no outline) still
+/// counts as owned on reload, and in its owner's OWN spaces (a tall window's upper blocks - IAutoBoxesPartOfOwner) it
+/// seals rooms and holds torches exactly as the owner's own block does, open or shut, it sounds like its owner when hit
+/// or broken, and a space can be SHARED by more than one owner (two shutters folding into one gap): every sharer's
+/// boxes show and are solid there, and a click or break goes to the one whose box is aimed at.
 /// </summary>
 public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
 {
-    // UDL: outlines drawn here, so an item's box from a window below follows that window's "Show Placed Item Box" setting
-    // (Calm, 2026-10-10: "the boxes show for items when looking past the block, need that to be disabled when the setting
-    // is changed like normal"). Everything else draws as the game would: the aimed box only (partial selection).
+    // UDL: outlines drawn here, so an item's box from a window below follows that window's "Show Placed Item Box"
+    // setting. Everything else draws as the game would: the aimed box only (partial selection).
     public void RenderSelectionBoxes(BlockSelection blockSel, RenderBoxDelegate renderBoxHandler)
     {
         if (api is not ICoreClientAPI capi || blockSel?.Position == null) return;
@@ -34,11 +33,9 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
         if (blockSel.SelectionBoxIndex < 0 || blockSel.SelectionBoxIndex >= boxes.Length) return;
         Cuboidf hovered = boxes[blockSel.SelectionBoxIndex];
         if (BEUniversalDisplay.IsHiddenPartBox((hovered as CuboidfWithId)?.Id)) return;
-        // Both pads and placed items need the owner's complete preview. An upper
-        // filler used to forward only pads, losing the flower preview on a pot.
-        // ONLY those (lib 1.3.1, Calm 2026-10-20: "no box when open but is when closed" on every External Shutter): the
-        // owner draws by looking the id up among its OWN block's boxes, and an open leaf lying wholly in this space is not
-        // there - so it drew nothing and the leaf had no outline. Leaves and frame parts are drawn here, as before 1.3.0.
+        // Both pads and placed items need the owner's complete preview. Only those: the owner draws by looking the id
+        // up among its OWN block's boxes, and an open leaf lying wholly in this space is not there - so it would draw
+        // nothing. Leaves and frame parts are drawn here.
         DisplaySlotId slot = DisplaySlotId.Decode((hovered as CuboidfWithId)?.Id);
         if (slot != null)
         {
@@ -118,10 +115,9 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
     }
 
     /// <summary>
-    /// UDL: a selection of a filler as its aimed owner's own block would see it, the aimed box's id kept - for code that reads
-    /// the player's selection itself rather than through a block method (the display's mouse wheel, placing ghost and editor).
-    /// Any other selection comes back unchanged. (2026-10-10: an item stacked above its shelf could not be turned or raised
-    /// and showed no stacking ghost - the aim had reached the filler above, and those only looked at the aimed block.)
+    /// UDL: a selection of a filler as its aimed owner's own block would see it, the aimed box's id kept - for code
+    /// that reads the player's selection itself rather than through a block method (the display's mouse wheel, placing
+    /// ghost and editor). Any other selection comes back unchanged.
     /// </summary>
     public static BlockSelection ToOwner(IBlockAccessor ba, BlockSelection selection)
     {
@@ -195,6 +191,13 @@ public class BlockAutoBoxesFiller : Block, ICustomSelectionBoxRender
     {
         var owner = ba == null ? null : OwnerOf(ba, pos);
         return owner != null && ba.GetBlockEntity(owner) is IAutoBoxesPartOfOwner o && o.IsPartOfOwner(pos) ? owner : null;
+    }
+
+    /// <summary>No vanilla snow layer on top of a filler either (a tall window's or shutter's upper blocks) - as its owner, BlockUniversalDisplay.AllowSnowCoverage.</summary>
+    public override bool AllowSnowCoverage(IWorldAccessor world, BlockPos blockPos)
+    {
+        var owner = OwnerOf(world.BlockAccessor, blockPos);
+        return owner != null ? world.BlockAccessor.GetBlock(owner).AllowSnowCoverage(world, owner) : base.AllowSnowCoverage(world, blockPos);
     }
 
     public override int GetRetention(BlockPos pos, BlockFacing facing, EnumRetentionType type)

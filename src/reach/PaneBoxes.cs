@@ -7,14 +7,13 @@ using Vintagestory.API.MathTools;
 namespace UniversalDisplayLib.Reach
 {
     /// <summary>
-    /// A window's boxes, measured from its model the way the AutoBoxes Kit measures (one box round the parts),
-    /// split into what moves and what does not (2026-10-06, the rebuild on the kit):
-    ///   fixed parts - every part no pane's open animation moves (frame edges, sill, fixed glass), EACH ITS OWN BOX
-    ///                 (Calm: "each part has a box"); a part wholly inside another part's box is left out;
+    /// A window's boxes, measured from its model the way the AutoBoxes Kit measures (one box round the parts), split
+    /// into what moves and what does not:
+    ///   fixed parts - every part no pane's open animation moves (frame edges, sill, fixed glass), EACH ITS OWN BOX; a part wholly inside another part's box is left out;
     ///   each pane   - the parts its open animation moves as ONE box, shut (as in the file) and open (at the animation's end).
-    /// The kit itself measures the model standing still; this is the window's own addition for leaves that swing
-    /// out of the block (the External Shutter's fold into the blocks beside it). Measured once per block type.
-    /// In the model's frame, in blocks, before the window's own turn.
+    /// The kit itself measures the model standing still; this is the window's own addition for leaves that swing out of
+    /// the block (the External Shutter's fold into the blocks beside it). Measured once per block type. In the model's
+    /// frame, in blocks, before the window's own turn.
     /// </summary>
     public sealed class PaneBoxes
     {
@@ -29,9 +28,8 @@ namespace UniversalDisplayLib.Reach
         public Cuboidf[] Open { get; private init; } = Array.Empty<Cuboidf>();
 
         /// <summary>
-        /// Per pane, the path it swings through (Calm, 2026-10-07: a classic window opened through a closed shutter leaf - its
-        /// end pose missed the leaf, its swing did not): the leaf's parts, EACH ITS OWN BOX so a diagonal leaf is not one
-        /// huge box, at <see cref="SweepSteps"/> points along its open animation, the end included. Only for room checks -
+        /// Per pane, the path it swings through: the leaf's parts, EACH ITS OWN BOX so a diagonal leaf is not one huge
+        /// box, at <see cref="SweepSteps"/> points along its open animation, the end included. Only for room checks -
         /// boxes and fillers still follow <see cref="Open"/>.
         /// </summary>
         public Cuboidf[][] Sweep { get; private init; } = Array.Empty<Cuboidf[]>();
@@ -233,10 +231,11 @@ namespace UniversalDisplayLib.Reach
         }
 
         /// <summary>
-        /// The shape decides (Calm, 2026-10-06): every element whose name starts with "Static" is a group - ONE box round
-        /// everything inside it, as a leaf is one box round everything its animation moves. A Static group inside another is
-        /// its own box (its parts not counted in the outer one); one inside a leaf is part of the leaf. A part in no Static
-        /// group and no leaf gets collision and unoutlined selection (Solid). Null when the shape has no Static group at all.
+        /// The shape decides: every element whose name starts with "Static" is a group - ONE box round everything
+        /// inside it, as a leaf is one box round everything its animation moves. A Static group inside another is its
+        /// own box (its parts not counted in the outer one); one inside a leaf is part of the leaf. A part in no Static
+        /// group and no leaf gets collision and unoutlined selection (Solid). Null when the shape has no Static group
+        /// at all.
         /// </summary>
         static bool IsStatic(string name) => name != null && name.StartsWith("static", StringComparison.OrdinalIgnoreCase);
 
@@ -276,7 +275,7 @@ namespace UniversalDisplayLib.Reach
         /// <summary>
         /// Fixed parts that line up end to end - the same size across two directions, touching or overlapping along the
         /// third - become one box. A tall window's model is its old 1-block sections joined, so each frame edge is one
-        /// piece per section; joined, the edge is one box the whole height, as the leaves are (Calm, 2026-10-06).
+        /// piece per section; joined, the edge is one box the whole height, as the leaves are.
         /// </summary>
         static Cuboidf[] Joined(Cuboidf[] boxes)
         {

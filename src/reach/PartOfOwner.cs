@@ -5,9 +5,9 @@ using Vintagestory.API.MathTools;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// An AutoBoxes owner some of whose filler spaces are PART OF the block itself - a tall window's upper blocks - rather
-    /// than spaces a moving leaf only swings into. The lib's filler copy (src/autoboxes/AutoBoxesFiller.cs, "UDL:") then
-    /// seals rooms and holds torches there exactly as the owner's own block does, open or shut (2026-10-07).
+    /// An AutoBoxes owner some of whose filler spaces are PART OF the block itself - a tall window's upper blocks -
+    /// rather than spaces a moving leaf only swings into. The lib's filler copy (src/autoboxes/AutoBoxesFiller.cs,
+    /// "UDL:") then seals rooms and holds torches there exactly as the owner's own block does, open or shut.
     /// </summary>
     public interface IAutoBoxesPartOfOwner
     {
@@ -22,12 +22,11 @@ namespace UniversalDisplayLib
     }
 
     /// <summary>
-    /// LIGHT in the owner's own spaces (2026-10-07, the old reachcolumn / reachcolumnclear pair brought back). Light is a
-    /// block property the engine reads without asking, so the filler cannot answer it the way it answers rooms - instead
-    /// there are two fillers, the clear one (assets blocktypes/autoboxesfiller.json) and a dark one
-    /// (autoboxesfillerdark.json, same classes). Each filler in the owner's own spaces is swapped to match the OWNER'S
-    /// block: dark while that absorbs light (a shut External Shutter), clear otherwise (glass windows, any open state).
-    /// Spaces a leaf only swings into always stay clear.
+    /// LIGHT in the owner's own spaces. Light is a block property the engine reads without asking, so the filler cannot
+    /// answer it the way it answers rooms - instead there are two fillers, the clear one (assets
+    /// blocktypes/autoboxesfiller.json) and a dark one (autoboxesfillerdark.json, same classes). Each filler in the
+    /// owner's own spaces is swapped to match the OWNER'S block: dark while that absorbs light (a shut External
+    /// Shutter), clear otherwise (glass windows, any open state). Spaces a leaf only swings into always stay clear.
     /// </summary>
     public static class PartOfOwnerLight
     {

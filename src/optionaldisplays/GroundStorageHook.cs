@@ -17,13 +17,14 @@ namespace UniversalDisplayLib.OptionalDisplays
     /// there instead - a Universal Display Lib floor surface - so the item goes down the lib's way: free grid, any
     /// angle, stacking, raise and lower, the placing ghost.
     ///
-    /// WHAT IS LEFT TO THE GAME, on purpose (docs/ground-storage-plan.md in the lib copy): Stacking piles (ingots,
-    /// planks, bricks, firewood - their own pile models and capacities), WallHalves and Messy12, pit kilns and
-    /// burning piles, and every pile already in the world. Anything the lib could not display is left to the game too.
+    /// WHAT IS LEFT TO THE GAME, on purpose: Stacking piles (ingots, planks, bricks, firewood - their own pile models
+    /// and capacities), WallHalves and Messy12, pit kilns and burning piles, and every pile already in the world.
+    /// Anything the lib could not display is left to the game too.
     ///
     /// The checks before placing are the game's own, in the same order (public vssurvivalmod
-    /// CollectibleBehavior/BehaviorGroundStorable.cs): ground placement active (the place key toggled on, or Shift / Ctrl held - GroundSettings), a player, claims, aiming at the up face, a block
-    /// below that supports it, replaceable space above.
+    /// CollectibleBehavior/BehaviorGroundStorable.cs): ground placement active (the place key toggled on, or Shift /
+    /// Ctrl held - GroundSettings), a player, claims, aiming at the up face, a block below that supports it,
+    /// replaceable space above.
     /// </summary>
     public static class GroundStorageHook
     {

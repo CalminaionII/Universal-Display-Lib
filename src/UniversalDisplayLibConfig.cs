@@ -30,7 +30,7 @@ namespace UniversalDisplayLib
         [Range(1, 64)]
         public int RainSoundRange { get; set; } = 12;
 
-        // ====================== Open / close sound (2026-10-12: a player asked for a way to turn it off) ======================
+        // ====================== Open / close sound ======================
         [Category("Sounds")]
         [Display(Name = "Open Close Sound Comment", Description = "The sound a display block makes when you open or close it. 0 = off, 1 = very quiet, 5 = normal, 10 = loud")]
         public string OpenCloseSoundComment { get; set; } = "The sound a display block makes when you open or close it. 0 = off, 1 = very quiet, 5 = normal, 10 = loud";
@@ -50,7 +50,68 @@ namespace UniversalDisplayLib
         [Range(1, 5)]
         public int AnimationSpeed { get; set; } = 3;
 
-    
+        [Category("Animation")]
+        [Display(Name = "Levitating Animation Comment", Description = "Items on a levitating display turn and bob up close. Off: they hover still")]
+        public string LevitatingAnimationComment { get; set; } = "Items on a levitating display turn and bob up close. Off: they hover still";
+
+        /// <summary>
+        /// The levitating display's motion (FloatingItemRenderer, hover mode). Off, the item is drawn still at its hover
+        /// height in the block's own mesh, which costs nothing per frame. The player's own; nothing else changes.
+        /// </summary>
+        [Category("Animation")]
+        [Display(Name = "Levitating Animation", Description = "Items on a levitating display turn and bob up close. Off: they hover still")]
+        public bool LevitatingAnimation { get; set; } = true;
+
+        // ---- weather on windows: one switch per effect. Each player's own - they only change what that player sees and hears.
+        [Category("Animation")]
+        [Display(Name = "Frost On Windows Comment", Description = "Window glass with open sky beside it frosts over in freezing weather. Off: no frost")]
+        public string FrostOnWindowsComment { get; set; } = "Window glass with open sky beside it frosts over in freezing weather. Off: no frost";
+
+        [Category("Animation")]
+        [Display(Name = "Frost On Windows", Description = "Window glass with open sky beside it frosts over in freezing weather. Off: no frost")]
+        public bool FrostOnWindows { get; set; } = true;
+
+        [Category("Animation")]
+        [Display(Name = "Snow On Windows Comment", Description = "Snow gathers on window glass and shutter boards while it snows. Off: no snow")]
+        public string SnowOnWindowsComment { get; set; } = "Snow gathers on window glass and shutter boards while it snows. Off: no snow";
+
+        [Category("Animation")]
+        [Display(Name = "Snow On Windows", Description = "Snow gathers on window glass and shutter boards while it snows. Off: no snow")]
+        public bool SnowOnWindows { get; set; } = true;
+
+        [Category("Animation")]
+        [Display(Name = "Rain On Windows Comment", Description = "Rain runs down window glass and shutters while it rains, and their wood goes damp. Off: no rain")]
+        public string RainOnWindowsComment { get; set; } = "Rain runs down window glass and shutters while it rains, and their wood goes damp. Off: no rain";
+
+        [Category("Animation")]
+        [Display(Name = "Rain On Windows", Description = "Rain runs down window glass and shutters while it rains, and their wood goes damp. Off: no rain")]
+        public bool RainOnWindows { get; set; } = true;
+
+        [Category("Animation")]
+        [Display(Name = "Storm Grime On Windows Comment", Description = "Temporal storms leave rust dust and black mold on window glass, clearing as the storm ends. Off: none")]
+        public string StormGrimeOnWindowsComment { get; set; } = "Temporal storms leave rust dust and black mold on window glass, clearing as the storm ends. Off: none";
+
+        [Category("Animation")]
+        [Display(Name = "Storm Grime On Windows", Description = "Temporal storms leave rust dust and black mold on window glass, clearing as the storm ends. Off: none")]
+        public bool StormGrimeOnWindows { get; set; } = true;
+
+        [Category("Animation")]
+        [Display(Name = "Windows Rock In Wind Comment", Description = "Windows and shutters rock and bang in a strong breeze or a storm. Off: they stay still")]
+        public string WindRockingComment { get; set; } = "Windows and shutters rock and bang in a strong breeze or a storm. Off: they stay still";
+
+        [Category("Animation")]
+        [Display(Name = "Windows Rock In Wind", Description = "Windows and shutters rock and bang in a strong breeze or a storm. Off: they stay still")]
+        public bool WindRocking { get; set; } = true;
+
+        [Category("Animation")]
+        [Display(Name = "Closing Thud Comment", Description = "A soft thud when a window or door shuts. Off: no thud")]
+        public string CloseThudComment { get; set; } = "A soft thud when a window or door shuts. Off: no thud";
+
+        [Category("Animation")]
+        [Display(Name = "Closing Thud", Description = "A soft thud when a window or door shuts. Off: no thud")]
+        public bool CloseThud { get; set; } = true;
+
+
         // ====================== Placement rotation ======================
         [Category("Placement Rotation")]
         [Display(Name = "Rotation Comment", Description = "Rotation Degrees (5 to 90)")]
@@ -95,7 +156,7 @@ namespace UniversalDisplayLib
         [Range(1, 16)]
         public float HeightLimitVoxels { get; set; } = 8f;
 
-        // ====================== Placement size (lib 1.4.0, the Resize key) ======================
+        // ====================== Placement size (the Resize key) ======================
         [Category("Placement Size")]
         [Display(Name = "Size Comment", Description = "Size Percent (1 to 50), smallest (10 to 100) and largest (100 to 400)")]
         public string SizeComment { get; set; } = "Size Percent (1 to 50), smallest (10 to 100) and largest (100 to 400)";
@@ -126,30 +187,25 @@ namespace UniversalDisplayLib
         public string PrecisePlacementComment { get; set; } = "Half-voxel placement spots - 32 across a block instead of 16, which is one pixel of a 32x32 texture. Needs a restart to take effect";
 
         /// <summary>
-        /// Half-voxel placement spots instead of whole-voxel ones — 32 across a block rather
-        /// than 16, which is one pixel of a 32x32 texture and therefore the finest distinction
-        /// a player can actually see. There is deliberately no finer setting: doubling again
-        /// would be sixteen times the boxes for a difference nobody can perceive.
+        /// Half-voxel placement spots instead of whole-voxel ones — 32 across a block rather than 16, which is one
+        /// pixel of a 32x32 texture and therefore the finest distinction a player can actually see. There is
+        /// deliberately no finer setting: doubling again would be sixteen times the boxes for a difference nobody can
+        /// perceive.
         ///
-        /// **A RENAME, NOT A RETYPE.** This replaces an int `PlacementStepsPerVoxel` that
-        /// briefly existed. Changing that property's TYPE in place would throw while
-        /// deserialising the old number into a bool, and `Load()` catches that by falling back
-        /// to defaults — silently wiping every other setting the player had. `PlacementBox`
-        /// taught this once already; the fix both times is a new name, so the stale key is
-        /// simply ignored.
+        /// A rename, not a retype, of the old int `PlacementStepsPerVoxel`: changing a property's TYPE in place throws
+        /// while deserialising the old number, and `Load()` catches that by falling back to defaults, silently wiping
+        /// every other setting. A new name is simply ignored.
         ///
-        /// **Costs boxes quadratically** — 4x, so a display unit goes from 308 pads to about
-        /// 1,230. Load-tested 2026-08-06 at ~50 windows with items: no measurable memory
-        /// growth and no creep across chunk reloads. Rebuilds cost ~0.5 ms and fire on
-        /// invalidation, not per frame.
+        /// **Costs boxes quadratically** — 4x, so a display unit goes from 308 pads to about 1,230. Load-tested at ~50
+        /// windows with items: no measurable memory growth and no creep across chunk reloads. Rebuilds cost ~0.5 ms and
+        /// fire on invalidation, not per frame.
         ///
         /// **Read once, when the grid is built at block load**, so a change needs a restart.
         ///
-        /// SAFE TO TURN OFF. The pad grid and an item's own box come from different places —
-        /// pads from BuildGridBoxes, a placed item's box from its stored slot id — so items
-        /// already sitting on half-voxel spots keep their boxes and stay clickable with this
-        /// off. The id is a plain string carrying a float, so nothing needs migrating either
-        /// way.
+        /// SAFE TO TURN OFF. The pad grid and an item's own box come from different places — pads from BuildGridBoxes,
+        /// a placed item's box from its stored slot id — so items already sitting on half-voxel spots keep their boxes
+        /// and stay clickable with this off. The id is a plain string carrying a float, so nothing needs migrating
+        /// either way.
         /// </summary>
         [Category("Placement Rules")]
         [Display(Name = "Precise Placement", Description = "Half-voxel placement spots - 32 across a block instead of 16. Needs a restart")]
@@ -160,16 +216,13 @@ namespace UniversalDisplayLib
         public string AllowItemOverlapComment { get; set; } = "Let items overlap each other on a surface so they can be packed tight. Stacking is unaffected and items still have to stay on the surface. Overlapping items are fiddlier to pick back up";
 
         /// <summary>
-        /// Stops item-to-item collision REFUSING a placement. It does not stop it being
-        /// detected — that same test is what decides an item should stack, so switching the
-        /// detection off would quietly end stacking altogether.
+        /// Stops item-to-item collision REFUSING a placement. It does not stop it being detected — that same test is
+        /// what decides an item should stack, so switching the detection off would quietly end stacking altogether.
         ///
-        /// The reasoning is the one that made rotation free: the rule existed because nothing
-        /// SHOWED the player the problem, and the ghost now does. Bounds are untouched, so
-        /// items still cannot leave the surface.
+        /// The ghost shows the player the problem. Bounds are untouched, so items still cannot leave the surface.
         ///
-        /// **Server-side in effect**, like every other placement rule here — `TryPut` runs on
-        /// both sides, so this has to match or the two disagree about what is legal.
+        /// **Server-side in effect**, like every other placement rule here — `TryPut` runs on both sides, so this has
+        /// to match or the two disagree about what is legal.
         /// </summary>
         [Category("Placement Rules")]
         [Display(Name = "Allow Item Overlap", Description = "Let items overlap each other on a surface so they can be packed tight. Stacking is unaffected and items still have to stay on the surface. Overlapping items are fiddlier to pick back up")]
@@ -204,24 +257,17 @@ namespace UniversalDisplayLib
         public string ShowPlacementBoxComment { get; set; } = "Outline showing where the held item will land. false hides it and leaves just the ghost";
 
         /// <summary>
-        /// The box and the ghost overlap in what they tell you, but not completely: the
-        /// ghost shows the ITEM, the box shows the FOOTPRINT, and those genuinely differ —
-        /// seashells declare a deliberately tight box so more fit along a sill, and the
-        /// ruler is 12.8 wide but paper thin. Turning the box off is a real choice rather
-        /// than pure tidying, so it is a setting rather than a decision made for everyone.
+        /// The box and the ghost overlap in what they tell you, but not completely: the ghost shows the ITEM, the box
+        /// shows the FOOTPRINT, and those genuinely differ — seashells declare a deliberately tight box so more fit
+        /// along a sill, and the ruler is 12.8 wide but paper thin. Turning the box off is a real choice rather than
+        /// pure tidying, so it is a setting rather than a decision made for everyone.
         ///
-        /// RENAMED from an int `PlacementBox` (0/1/2) on 2026-07-30. Renaming rather than
-        /// changing the type on purpose: an existing file holds `"PlacementBox": 2`, and
-        /// deserialising 2 into a bool throws — which Load() catches by falling back to
-        /// defaults, silently resetting every other setting the player had. A new NAME is
-        /// simply an added key and a removed one, which SchemaDiffers reconciles by design.
+        /// Renamed from an int `PlacementBox` rather than retyped, for the same reason as PrecisePlacement above.
         /// </summary>
         [Category("Placement Preview")]
         [Display(Name = "Show Placement Box", Description = "Outline showing where the held item will land. false hides it and leaves just the ghost")]
-        // OFF by default from 1.0.3. The ghost shows the item where it will land and reddens
-        // the same way, so the outline is a second opinion most players do not need — and the
-        // author's own verdict on hiding them was that it "makes it feel like there is true
-        // free placement". Still one switch away for anyone judging a tight fit.
+        // OFF by default. The ghost shows the item where it will land and reddens the same way, so the outline is a
+        // second opinion most players do not need. Still one switch away for anyone judging a tight fit.
         public bool ShowPlacementBox { get; set; } = false;
 
         [Category("Placement Preview")]
@@ -252,6 +298,23 @@ namespace UniversalDisplayLib
         [Category("General")]
         [Display(Name = "Room Safe Opening", Description = "Close windows before changing, if true will disable open/closed states")]
         public bool RoomSafeOpening { get; set; } = false;
+
+        [Category("General")]
+        [Display(Name = "Wind Window Frequency Comment", Description = "Windows creak in a strong breeze or a storm - how often. 0 = never, 5 = normal, 10 = twice as often. Sprint + right-click a window's frame (with anything but a wrench in hand) to latch it")]
+        public string WindWindowFrequencyComment { get; set; } = "Windows creak in a strong breeze or a storm - how often. 0 = never, 5 = normal, 10 = twice as often. Sprint + right-click a window's frame (with anything but a wrench in hand) to latch it";
+
+        [Category("General")]
+        [Display(Name = "Wind Window Frequency", Description = "Windows creak in a strong breeze or a storm - how often. 0 = never, 5 = normal, 10 = twice as often")]
+        [Range(0, 10)]
+        public int WindWindowFrequency { get; set; } = 5;
+
+        [Category("General")]
+        [Display(Name = "Wind Glass Rattle Comment", Description = "Window glass rattles in its frame in a strong breeze or a storm. Off: no rattle")]
+        public string WindGlassRattleComment { get; set; } = "Window glass rattles in its frame in a strong breeze or a storm. Off: no rattle";
+
+        [Category("General")]
+        [Display(Name = "Wind Glass Rattle", Description = "Window glass rattles in its frame in a strong breeze or a storm. Off: no rattle")]
+        public bool WindGlassRattle { get; set; } = true;
 
         // ====================== Computed values (hidden) ======================
         [Newtonsoft.Json.JsonIgnore]
@@ -396,15 +459,13 @@ namespace UniversalDisplayLib
 
                 // ── CARRY THE OLD FILE OVER, ONCE ────────────────────────────────────
                 //
-                // The mod was `windowdisplaylib` until the rename, and the config filename
-                // follows the modid — so without this every existing player silently gets
-                // defaults back: rain volume reset, ghost switched on again, jitter back.
-                // Nothing errors, which is exactly why it would go unnoticed.
+                // The mod was `windowdisplaylib` until the rename, and the config filename follows the modid — so
+                // without this every existing player silently gets defaults back: rain volume reset, ghost switched on
+                // again, jitter back.
                 //
-                // The old file is READ as this class, so every matching property comes across
-                // and anything since removed is dropped. It runs only when the new file does
-                // not exist yet, so it cannot overwrite settings a player has already changed
-                // under the new name.
+                // The old file is READ as this class, so every matching property comes across and anything since
+                // removed is dropped. It runs only when the new file does not exist yet, so it cannot overwrite
+                // settings a player has already changed under the new name.
                 MigrateLegacyConfig(api, configFilename);
 
                 Current = api.LoadModConfig<UniversalDisplayLibConfig>(configFilename);
@@ -454,15 +515,11 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Compares the property names on disk against the ones this class actually
-        /// serialises. Any difference in either direction means the file is stale.
+        /// Compares the property names on disk against the ones this class actually serialises. Any difference in
+        /// either direction means the file is stale.
         ///
-        /// Deliberately not a string search for a known option name: that only catches
-        /// additions, has to be updated by hand every time an option is added, and
-        /// silently leaves removed options sitting in the file forever.
-        ///
-        /// Values are untouched — Current was already deserialised from this file, so
-        /// re-saving keeps every setting the user had and only reconciles the shape.
+        /// Values are untouched — Current was already deserialised from this file, so re-saving keeps every setting the
+        /// user had and only reconciles the shape.
         /// </summary>
         private static bool SchemaDiffers(string rawJson, out string added, out string removed)
         {

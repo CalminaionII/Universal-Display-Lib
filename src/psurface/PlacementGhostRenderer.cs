@@ -8,22 +8,17 @@ using Vintagestory.GameContent;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// Draws a see-through copy of the held item where it would land, inside the outline
-    /// box that already shows whether it fits.
+    /// Draws a see-through copy of the held item where it would land, inside the outline box that already shows whether
+    /// it fits.
     ///
-    /// The box answers "will this go here"; the ghost answers "what will it look like".
-    /// Both are wanted, so this adds to the box rather than replacing it, and both take
-    /// their colour from the SAME fit test — red when it will not place.
+    /// The box answers "will this go here"; the ghost answers "what will it look like". Both are wanted, so this adds
+    /// to the box rather than replacing it, and both take their colour from the SAME fit test — red when it will not
+    /// place.
     ///
-    /// THIS IS THE ONLY THING IN THE MOD THAT DRAWS PER FRAME. Everything else goes
-    /// through the chunk mesher or vanilla's AnimatableRenderer. That makes it the only
-    /// code here that can cost frames or take the client down, which is why it is behind
-    /// a config switch, why it never throws out of OnRenderFrame, and why it owns its GPU
+    /// THIS IS THE ONLY THING IN THE MOD THAT DRAWS PER FRAME. Everything else goes through the chunk mesher or
+    /// vanilla's AnimatableRenderer. That makes it the only code here that can cost frames or take the client down,
+    /// which is why it is behind a config switch, why it never throws out of OnRenderFrame, and why it owns its GPU
     /// meshes explicitly.
-    ///
-    /// Vanilla does NOT do this — <c>BlockBehaviorDisplay</c> draws the same wireframe
-    /// cuboid we did and nothing more, and its <c>placingItemsPreview</c> is only a
-    /// boolean gate despite the name. So there was no vanilla implementation to follow.
     /// </summary>
     public class PlacementGhostRenderer : IRenderer
     {
@@ -68,8 +63,8 @@ namespace UniversalDisplayLib
 
         /// <summary>
         /// Bumped whenever an item's look may have changed (the .udedit editor's live edits). The uploaded ghost meshes
-        /// are keyed by the item, not by its transform or size, so without this the ghost kept the old model and size
-        /// until a restart (Calm, 2026-10-06).
+        /// are keyed by the item, not by its transform or size, so without this the ghost would keep the old model and
+        /// size until a restart.
         /// </summary>
         static volatile int staleGeneration;
         int seenGeneration;
@@ -107,9 +102,8 @@ namespace UniversalDisplayLib
         {
             if (UniversalDisplayLibConfig.Current?.PlacementGhost != true) return;
 
-            // A CEILING ON THE KEPT MESHES (2026-10-22): one GPU mesh per item (and per contents) ever held, for the whole
-            // session, grew without end on a long play. Past the ceiling they all go and the ones in use come back on
-            // the next frame - one upload, not a stutter.
+            // A ceiling on the kept meshes, one GPU mesh per item and per contents: past the ceiling they all go and
+            // the ones in use come back on the next frame - one upload, not a stutter.
             if (seenGeneration != staleGeneration || uploaded.Count > MaxUploaded)
             {
                 seenGeneration = staleGeneration;
@@ -142,12 +136,6 @@ namespace UniversalDisplayLib
             BlockSelection blockSel = BEUniversalDisplay.WindowSelection(capi.World.BlockAccessor, player?.CurrentBlockSelection);
             if (blockSel == null) return;
 
-            // The wrench used to be excluded here, on the grounds that holding one meant a
-            // swap or a rotate rather than a placement. Both halves of that stopped being
-            // true on 2026-07-30: rotation moved to the mouse wheel, and the wrench is now
-            // an ordinary placeable item with its own patch. Swapping is a CTRL+wrench click
-            // on a frame box, which never reaches the ghost anyway, so nothing is gained by
-            // the exclusion and a wrench with no preview is simply inconsistent.
             ItemSlot held = player.Entity?.RightHandItemSlot;
             if (held == null || held.Empty) return;
 
@@ -175,20 +163,18 @@ namespace UniversalDisplayLib
 
             // LAST RESORT: preview the container EMPTY.
             //
-            // A filled liquid container's mesh cannot be uploaded to the GPU at all — not a
-            // texture-id problem, which is what it looked like at first. Both routes die in
-            // vanilla code on a mesh that renders perfectly well through the chunk mesher:
+            // A filled liquid container's mesh cannot be uploaded to the GPU at all. Both routes die in vanilla code on
+            // a mesh that renders perfectly well through the chunk mesher:
             //
             //   MeshData.AddMeshData(data, filter)      <- the multi-texture split
             //   ClientPlatformWindows.UploadMesh(data)  <- the raw upload, even single-id
             //
-            // Nothing here can rebuild vertex data it does not have. But the ghost exists to
-            // show WHERE and WHICH WAY ROUND the thing goes, and the container's own shape
-            // answers both — the liquid inside it is detail the player gets back the instant
-            // it is placed. So strip the contents and preview the vessel.
+            // Nothing here can rebuild vertex data it does not have. But the ghost exists to show WHERE and WHICH WAY
+            // ROUND the thing goes, and the container's own shape answers both — the liquid inside it is detail the
+            // player gets back the instant it is placed. So strip the contents and preview the vessel.
             //
-            // Falls out neatly: an emptied stack keys to the same cache entry as a genuinely
-            // empty one, which already uploads fine, so this usually costs no upload at all.
+            // An emptied stack keys to the same cache entry as a genuinely empty one, which already uploads fine, so
+            // this usually costs no upload at all.
             if (meshRef == null)
             {
                 ItemSlot bare = EmptiedCopy(held);
@@ -238,11 +224,9 @@ namespace UniversalDisplayLib
         /// </summary>
         private MultiTextureMeshRef GetOrUpload(ItemSlot held, DisplayableAttributes dattr, MeshData meshData)
         {
-            // Contents are part of the geometry, so they have to be part of the key. A
-            // container's own IContainedMeshSource.GetMeshCacheKey encodes them — it is what
-            // the block entity keys its mesh cache on, and keying on the collectible code
-            // alone made an empty bowl and a bowl of food share one uploaded mesh, so
-            // whichever was aimed at first won for both.
+            // Contents are part of the geometry, so they have to be part of the key. A container's own
+            // IContainedMeshSource.GetMeshCacheKey encodes them — it is what the block entity keys its mesh cache on;
+            // on the collectible code alone, an empty bowl and a bowl of food would share one uploaded mesh.
             string contentKey =
                 held.Itemstack.Collectible?.GetCollectibleInterface<IContainedMeshSource>()?.GetMeshCacheKey(held)
                 ?? held.Itemstack.Collectible?.Code?.ToString()
@@ -260,17 +244,12 @@ namespace UniversalDisplayLib
 
             // A FAILURE HERE IS ABOUT ONE ITEM, NOT ABOUT THE FEATURE.
             //
-            // Not every MeshData the block entity produces is uploadable as a
-            // multi-texture mesh — they are built for the chunk mesher, which has
-            // different requirements — and UploadMultiTextureMesh throws a bare
+            // Not every MeshData the block entity produces is uploadable as a multi-texture mesh — they are built for
+            // the chunk mesher, which has different requirements — and UploadMultiTextureMesh throws a bare
             // NullReferenceException when the mesh lacks what it needs.
             //
-            // The first version let that reach the outer handler, which logs once and
-            // disables the ghost for the WHOLE SESSION. So a single unsupported item
-            // killed the preview for every other item too, and it read in game as "the
-            // ghost just stopped working" with no obvious trigger. Caching the failure
-            // per item keeps the feature alive for everything else and stops it retrying
-            // an upload that cannot succeed on every single frame.
+            // Reaching the outer handler would disable the ghost for the whole session. Caching the failure per item
+            // keeps the feature alive for everything else and stops it retrying an upload that cannot succeed.
             try
             {
                 MultiTextureMeshRef fresh = capi.Render.UploadMultiTextureMesh(Uploadable(meshData));
@@ -281,14 +260,13 @@ namespace UniversalDisplayLib
             {
                 // SECOND CHANCE: force the mesh down to a single texture id and try again.
                 //
-                // A FILLED liquid container reaches here even though its mesh passes the
-                // checks in Uploadable — it has several texture ids AND a per-face map, so
-                // it looks well formed, and the split still throws somewhere inside. Rather
-                // than keep guessing at which field is missing, collapse it the same way an
-                // empty container is collapsed (which does work) and see if it uploads.
+                // A FILLED liquid container reaches here even though its mesh passes the checks in Uploadable — it has
+                // several texture ids AND a per-face map, so it looks well formed, and the split still throws somewhere
+                // inside. Collapse it the same way an empty container is collapsed (which does work) and see if it
+                // uploads.
                 //
-                // Only ever tried after a genuine failure, so a healthy mesh never takes
-                // this path and never loses its multi-texture split.
+                // Only ever tried after a genuine failure, so a healthy mesh never takes this path and never loses its
+                // multi-texture split.
                 try
                 {
                     MeshData flattened = Uploadable(meshData).Clone();
@@ -302,11 +280,9 @@ namespace UniversalDisplayLib
                     MultiTextureMeshRef retry = capi.Render.UploadMultiTextureMesh(flattened);
                     uploaded[key] = retry;
 
-                    // Debug, not Notification: this goes to client-debug.log rather than
-                    // the main log, so it is there when a modded container misbehaves and
-                    // invisible the rest of the time. Kept after the temporary perf probe
-                    // was removed because it names the item and describes its mesh, which
-                    // is the whole diagnosis for this class of fault.
+                    // Debug, not Notification: this goes to client-debug.log rather than the main log, so it is there
+                    // when a modded container misbehaves and invisible the rest of the time. It names the item and
+                    // describes its mesh, the whole diagnosis for this class of fault.
                     capi.Logger.Debug(
                         "[UniversalDisplayLib] ghost for {0} needed the single-texture fallback " +
                         "({1} ids, indices {2}, {3} vertices)",
@@ -320,12 +296,9 @@ namespace UniversalDisplayLib
                 {
                     uploaded[key] = null;
 
-                    // FULL exception, not just the message. Logging only e.Message cost a
-                    // whole round trip here: it proved something threw without saying where,
-                    // and the frame it names is the entire diagnosis.
-                    // Worded for what actually happens next: a CONTAINER goes on to be
-                    // previewed empty and the player still gets a ghost, so this must not
-                    // read as "the feature is broken for this item" when it usually is not.
+                    // FULL exception, not just the message: the frame it names is the diagnosis. Worded for what
+                    // actually happens next: a CONTAINER goes on to be previewed empty and the player still gets a
+                    // ghost, so this must not read as "the feature is broken for this item" when it usually is not.
                     capi.Logger.Warning(
                         "[UniversalDisplayLib] Placement ghost could not upload a mesh for {0}. " +
                         "If it holds something it will be previewed empty; otherwise it has no " +
@@ -477,11 +450,9 @@ namespace UniversalDisplayLib
                 prog.NormalShaded = 0;
                 prog.ExtraGodray = 0f;
 
-                // ssaoAttn is already 0 at rest — `standard.fsh` declares
-                // `uniform float ssaoAttn = 0;` and vanilla's own SystemRenderInsideBlock
-                // sets 1 and then puts 0 back — so this writes the resting value and leaks
-                // nothing. Kept explicit rather than removed, because relying on another
-                // system to have tidied up is how the shader-left-bound crash happened.
+                // ssaoAttn is already 0 at rest — `standard.fsh` declares `uniform float ssaoAttn = 0;` and vanilla's
+                // own SystemRenderInsideBlock sets 1 and then puts 0 back — so this writes the resting value and leaks
+                // nothing. Kept explicit rather than relying on another system to have tidied up.
                 prog.SsaoAttn = 0f;
 
                 // alphaTest is the one that DOES leak, and it is set deliberately: the ghost
@@ -503,27 +474,20 @@ namespace UniversalDisplayLib
                 prog.ViewMatrix = rpi.CameraMatrixOriginf;
                 prog.ProjectionMatrix = rpi.CurrentProjectionMatrix;
 
-                // "tex" — the sampler THIS program declares. Read from the shipped shader
-                // source, `assets/game/shaders/standard.fsh`:
+                // "tex" — the sampler THIS program declares. Read from the shipped shader source,
+                // `assets/game/shaders/standard.fsh`:
                 //
                 //     uniform sampler2D tex;
                 //     uniform sampler2D tex2dOverlay;
                 //
-                // The name is looked up in the bound program's uniform dictionary, so a
-                // wrong one is a KeyNotFoundException, not a silent no-draw. Two earlier
-                // guesses were wrong: "tex2d2d" (exists nowhere) and then "tex2d" — which
-                // DOES appear in the assemblies, but belongs to other shader programs.
-                // Grepping the binaries proved the string exists somewhere; only the
-                // shader source proves it belongs to this program. Do not "verify" a
-                // uniform name any other way.
+                // The name is looked up in the bound program's uniform dictionary, so a wrong one is a
+                // KeyNotFoundException. `tex2d` appears in the assemblies but belongs to other shader programs; only
+                // the shader source proves a name.
                 //
-                // Note there is deliberately no `prog.Tex2D = ...` before this, despite the
-                // property being named that: RenderMultiTextureMesh binds each of the
-                // mesh's textures itself, so setting it by hand was redundant, and reaching
-                // into BlockTextureAtlas.AtlasTextures[0] to do it was a throw waiting to
-                // happen inside the shader-bound window above.
-                // Chunk-rendered plants are visible from both sides. The standalone
-                // standard-shader ghost must also draw the backs of their flat faces.
+                // Note there is deliberately no `prog.Tex2D = ...` before this, despite the property being named that:
+                // RenderMultiTextureMesh binds each of the mesh's textures itself, so setting it by hand is redundant.
+                // Chunk-rendered plants are visible from both sides. The standalone standard-shader ghost must also
+                // draw the backs of their flat faces.
                 rpi.GlDisableCullFace();
                 try { rpi.RenderMultiTextureMesh(meshRef, "tex"); }
                 finally { rpi.GlEnableCullFace(); }
@@ -532,15 +496,13 @@ namespace UniversalDisplayLib
             {
                 if (prog != null)
                 {
-                    // PUT alphaTest BACK, and note the order: a uniform can only be written
-                    // while its program is bound, because ShaderProgramBase.Uniform calls
-                    // CheckShaderIsActive() first. So this has to happen BEFORE Stop().
+                    // PUT alphaTest BACK, and note the order: a uniform can only be written while its program is bound,
+                    // because ShaderProgramBase.Uniform calls CheckShaderIsActive() first. So this has to happen BEFORE
+                    // Stop().
                     //
-                    // Its own try/catch is not defensive clutter — if writing the uniform
-                    // threw out of the finally, Stop() would be skipped and the standard
-                    // shader would be left bound, which is precisely the crash this whole
-                    // block exists to prevent. Handing the shader back matters more than
-                    // handing this one value back.
+                    // Its own try/catch: if writing the uniform threw out of the finally, Stop() would be skipped and
+                    // the standard shader would be left bound, which is precisely the crash this whole block exists to
+                    // prevent. Handing the shader back matters more than handing this one value back.
                     try { prog.AlphaTest = DefaultAlphaTest; } catch { /* Stop() still runs */ }
 
                     prog.Stop();

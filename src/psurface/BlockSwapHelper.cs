@@ -71,17 +71,15 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Resolves the swap target for the current block: the FIRST listed template that
-        /// resolves to a real block other than this one. Returns null when nothing usable
-        /// is configured.
+        /// Resolves the swap target for the current block: the FIRST listed template that resolves to a real block
+        /// other than this one. Returns null when nothing usable is configured.
         ///
-        /// An array is a FALLBACK LIST, not a cycle — the current block's position in it is
-        /// never consulted, so `["a", "b"]` always yields "a" while "a" exists. This method
-        /// used to claim it cycled, which is wrong and cost a wrong turn once.
+        /// An array is a FALLBACK LIST, not a cycle — the current block's position in it is never consulted, so `["a",
+        /// "b"]` always yields "a" while "a" exists.
         ///
-        /// Cycles are expressed across BLOCKS instead, each with a single target pointing at
-        /// the next: `left → leftedge → right → rightedge → left` is four one-line
-        /// attributes and needs no array. That is how every cycle in the content is built.
+        /// Cycles are expressed across BLOCKS instead, each with a single target pointing at the next: `left → leftedge
+        /// → right → rightedge → left` is four one-line attributes and needs no array. That is how every cycle in the
+        /// content is built.
         /// </summary>
         public static Block GetNextTarget(IWorldAccessor world, Block currentBlock)
         {
@@ -110,8 +108,8 @@ namespace UniversalDisplayLib
             Block currentBlock = be.Block;
             if (!HasSwapTargets(currentBlock)) return false;
 
-            // The whole window is this one block entity (tall ones too, since lib 1.1.4), so it is
-            // the only inventory that has to be empty
+            // The whole window is this one block entity (tall ones too), so it is the only inventory that has to be
+            // empty
             if (!be.Inventory.Empty)
             {
                 (world.Api as ICoreClientAPI)?.TriggerIngameError(be, "notempty",
@@ -119,8 +117,8 @@ namespace UniversalDisplayLib
                 return true;
             }
 
-            // Every pane shut first (Calm, 2026-10-07): the next style's leaves, boxes and fillers are measured shut, and an
-            // open leaf would otherwise change shape mid-swing. Both sides refuse, so the server never swaps either.
+            // Every pane shut first: the next style's leaves, boxes and fillers are measured shut, and an open leaf
+            // would otherwise change shape mid-swing. Both sides refuse, so the server never swaps either.
             if (be.paneStates != null && Array.IndexOf(be.paneStates, true) >= 0)
             {
                 (world.Api as ICoreClientAPI)?.TriggerIngameError(be, "swapclosed",
@@ -132,6 +130,13 @@ namespace UniversalDisplayLib
 
             if (world.Side != EnumAppSide.Server) return true;
 
+            // a latched window stays as it is for anyone who could not unlatch it
+            if (!be.MayUnlatch(byPlayer))
+            {
+                (byPlayer as Vintagestory.API.Server.IServerPlayer)?.SendIngameError("latched", Lang.Get("universaldisplaylib:latched-locked"));
+                return true;
+            }
+
             if (target == null)
             {
                 world.Logger.Warning("[UniversalDisplayLib] {0} at {1} has no resolvable wrenchSwapTo; swap skipped.",
@@ -141,10 +146,7 @@ namespace UniversalDisplayLib
 
             // synchronize: false, relight: true — do NOT change this.
             //
-            // Setting synchronize to true was tried on 2026-07-27, on the theory that a
-            // stale client-side block ID was why a swap updated the shape but not the
-            // block's name. It did NOT fix the name, and it made the swap visibly
-            // non-instant, so it is a straight regression. Reverted.
+            // synchronize:true does not fix a stale block name and makes the swap visibly non-instant.
             IBlockAccessor relightAccessor = world.GetBlockAccessor(false, true, false);
 
             // Snapshot before the exchange; ExchangeBlock keeps the block entity
@@ -163,21 +165,11 @@ namespace UniversalDisplayLib
                 newBe.MarkDirty(true);
             }
 
-            // dualCallByPlayer is NULL here, and that is the opposite of what the rest of
-            // this mod passes — deliberately, because this call site is different.
+            // dualCallByPlayer is NULL here, unlike the rest of this mod, on purpose.
             //
-            // From the API docs: "If this call is made on client AND on server, set this to
-            // the causing player to prevent double playing... dualCall will play the sound on
-            // the client, and send it to all other players except source client." Right for
-            // the put/take/toggle sounds in BEUniversalDisplay, which really do run on both
-            // sides through OnBlockInteractStart.
-            //
-            // This one does not. The client returned at the `world.Side != Server` line
-            // above, long before here — so naming the swapping player suppressed the sound
-            // for the ONE person who caused it, while everybody else heard it. Passing null
-            // sends it to everyone, the acting player included.
-            // Nameable per block, like every other sound the lib plays — planks is right for
-            // a wooden window and wrong for a stone cabinet.
+            // `dualCall` is for calls made on both sides. This one is server only (the client returned above), so
+            // naming the swapping player would suppress the sound for that player alone. Nameable per block, like every
+            // other sound the lib plays — planks is right for a wooden window and wrong for a stone cabinet.
             world.PlaySoundAt(SwapSound(currentBlock),
                 pos.X + 0.5, pos.Y + 0.5, pos.Z + 0.5, null, randomizePitch: true, range: 16f);
 

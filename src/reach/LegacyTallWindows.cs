@@ -5,17 +5,17 @@ using Vintagestory.API.MathTools;
 namespace UniversalDisplayLib.Reach
 {
     /// <summary>
-    /// Converts tall windows built by the OLD chain system (Window Display 1.0.5 and earlier, lib 1.1.3 - one window block
-    /// entity per height) as their chunks load. Rebuilt on the AutoBoxes Kit 2026-10-06 from the 2026-10-05 ReachLegacy.
+    /// Converts tall windows built by the OLD chain system (Window Display 1.0.5 and earlier, lib 1.1.3 - one window
+    /// block entity per height) as their chunks load.
     ///
-    /// The block codes never changed: an old chain's BOTTOM block has the code the one-block tall window now uses, so it
-    /// simply loads as one. Its upper segments are still in the world under their old codes, which Window Display marks
-    /// <c>"legacySegment": true</c> (no shape, no item). Each is cleared (anything stored in it dropped - upper segments
-    /// never had surfaces, so nothing should be) and the window below puts the kit's fillers there instead.
+    /// The block codes never changed: an old chain's BOTTOM block has the code the one-block tall window now uses, so
+    /// it simply loads as one. Its upper segments are still in the world under their old codes, which Window Display
+    /// marks <c>"legacySegment": true</c> (no shape, no item). Each is cleared (anything stored in it dropped - upper
+    /// segments never had surfaces, so nothing should be) and the window below puts the kit's fillers there instead.
     ///
     /// Both ends start it, because either can load first (a window across a chunk edge); unloaded chunks are waited
     /// for, never treated as "nothing there". Every window also re-syncs its fillers once on load, which repairs any
-    /// that a world edit or an older test build left missing.
+    /// that a world edit left missing.
     /// </summary>
     public static class LegacyTallWindows
     {

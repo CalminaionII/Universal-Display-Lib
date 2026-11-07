@@ -20,17 +20,16 @@ namespace UniversalDisplayLib
     /// <summary>
     /// psurface-based window storage block entity.
     ///
-    /// Derives from <see cref="BlockEntityContainer"/> rather than hosting vanilla's
-    /// <c>BEBehaviorDisplay</c>, for three reasons vanilla cannot cover:
+    /// Derives from <see cref="BlockEntityContainer"/> rather than hosting vanilla's <c>BEBehaviorDisplay</c>, for
+    /// three reasons vanilla cannot cover:
     ///
-    ///  * <see cref="IContainedInteractable"/> takes a concrete BlockEntityContainer,
+    /// * <see cref="IContainedInteractable"/> takes a concrete BlockEntityContainer,
     ///    so cooking pots / crocks can only be interacted with from one
-    ///  * stored items drive block light, which needs a relight on content change
-    ///  * the block mesh is built with the block's materials (UDMaterials - the lib's own, since
-    ///    1.2.0; Attribute Rendering Library before)
+    /// * stored items drive block light, which needs a relight on content change
+    /// * the block mesh is built with the block's materials (UDMaterials)
     ///
-    /// The psurface *format* is kept identical to vanilla — shape element names and
-    /// string slot ids — so shapes authored for cabinets work unchanged.
+    /// The psurface *format* is kept identical to vanilla — shape element names and string slot ids — so shapes
+    /// authored for cabinets work unchanged.
     /// </summary>
     public partial class BEUniversalDisplay : BlockEntityContainer, ITexPositionSource, IAutoBoxesOwner, IAutoBoxesPartOfOwner
     {
@@ -38,19 +37,9 @@ namespace UniversalDisplayLib
         protected InventoryInfinite inv;
         public override InventoryBase Inventory => inv;
         /// <summary>
-        /// **CHANGED 2026-08-06 from "windowstorage", and this one was tested rather than
-        /// reasoned about.** It had been carrying the name of the mod two generations back.
-        ///
-        /// The risk was that this string is not purely cosmetic: it forms the inventory's
-        /// runtime id (`InventoryClassName + "-" + position`), which the game uses for dialog
-        /// opening and inventory sync. Stored CONTENTS save under the block entity's own tree
-        /// and not under this name, so the expectation was that changing it is harmless — but
-        /// the vanilla source could not be checked at the time (the public repo needs auth for
-        /// code search), so it was verified the honest way: a world saved with the OLD name was
-        /// loaded with the new one and the stored items were still there.
-        ///
-        /// If that ever turns out to be wrong, changing it BACK restores the old id and costs
-        /// nothing — nothing else in the mod reads it.
+        /// Forms the inventory's runtime id (`InventoryClassName + "-" + position`), used for dialog opening and
+        /// inventory sync. Stored contents save under the block entity's own tree, not under this name: a world saved
+        /// with the old name "windowstorage" kept its items.
         /// </summary>
         public override string InventoryClassName => "universaldisplay";
 
@@ -100,17 +89,14 @@ namespace UniversalDisplayLib
         private Cuboidf[] _padOnlyBoxes;
         private Cuboidf[] _allBoxes;
 
-        /// <summary>The placed items' footprint boxes from the last box rebuild (both sides alike) - itemCollision's boxes.</summary>
-        private Cuboidf[] _itemFootprints;
-
         /// <summary>The block's JSON asks for its placed items to be solid (the ground pile).</summary>
         bool ItemCollision => Block?.Attributes?["itemCollision"].AsBool(false) == true;
 
         /// <summary>
-        /// Set when a placed item's outline had to use its written size because its mesh was not built yet (the
-        /// boxes are made the moment an item goes in, the mesh a moment later when it is drawn). The next
-        /// tesselation, which builds the mesh, drops the outlines so they are measured again - so an item put in, or
-        /// swapped for another, gets ITS drawn size (Calm, 2026-10-06: "track the size change when replaced").
+        /// Set when a placed item's outline had to use its written size because its mesh was not built yet (the boxes
+        /// are made the moment an item goes in, the mesh a moment later when it is drawn). The next tesselation, which
+        /// builds the mesh, drops the outlines so they are measured again - so an item put in, or swapped for another,
+        /// gets ITS drawn size.
         /// </summary>
         private volatile bool _itemBoxNeedsMesh;
         private Cuboidf[] _collisionBoxes;
@@ -138,7 +124,7 @@ namespace UniversalDisplayLib
         private long _clientTickListener;
 
         // [ThreadStatic]: item meshes are built on the tesselation thread AND the main thread (the ghost), and the
-        // texture lookup below reads these while TesselateItem runs on the same thread that set them (2026-10-22).
+        // texture lookup below reads these while TesselateItem runs on the same thread that set them.
         [ThreadStatic] private static CollectibleObject _nowTesselatingObj;
         [ThreadStatic] private static Shape _nowTesselatingShape;
 
@@ -149,8 +135,8 @@ namespace UniversalDisplayLib
         public string AttributeTransformCode => BlockBehaviorDisplaySurfaces.TransformTarget;
 
         /// <summary>
-        /// Concurrent (2026-10-22): written from the tesselation thread (GenerateMeshes) and the main thread (the ghost,
-        /// floating items, the editor's Clear) at the same time - a plain Dictionary can corrupt itself under that.
+        /// Concurrent: written from the tesselation thread (GenerateMeshes) and the main thread (the ghost, floating
+        /// items, the editor's Clear) at the same time - a plain Dictionary can corrupt itself under that.
         /// </summary>
         protected ConcurrentDictionary<string, MeshData> MeshCache =>
             ObjectCacheUtil.GetOrCreate(Api, "universaldisplaylib-itemmeshes", () => new ConcurrentDictionary<string, MeshData>());
@@ -173,29 +159,20 @@ namespace UniversalDisplayLib
         public bool CanOpen => Block?.Attributes?["canOpen"].AsBool(true) ?? true;
 
         /// <summary>
-        /// Suppresses the two deliberate irregularities an item gets on placement: the
-        /// random resting angle from its <c>RandYRotAngle</c> and the small vertical
-        /// scale wobble in <see cref="BuildSlotMatrix"/>. Both exist so a row of stored
-        /// clutter does not look machine-stamped, which is right for a sill of jars and
-        /// wrong for anything meant to read as part of the building.
+        /// Suppresses the random resting angle an item gets on placement from its <c>RandYRotAngle</c>. It exists so a
+        /// row of stored clutter does not look machine-stamped, which is right for a sill of jars and wrong for
+        /// anything meant to read as part of the building.
         ///
-        /// Declared on the BLOCK rather than per item, because it is a property of what
-        /// the surface is for: the custom chiselled window holds a block the player
-        /// aligned by hand, so a 15 degree lean or a 3% stretch is a defect there. An
-        /// item's own <c>randYRotAngle: 0</c> cannot cover it — a chiselled block gets
-        /// its DisplayableAttributes from <c>BlockMicroBlock</c>'s IDisplayableProps
-        /// implementation, which wins over attributes in the resolution order, so there
-        /// is no JSON on the item side to patch.
+        /// Declared on the BLOCK rather than per item, because it is a property of what the surface is for: the custom
+        /// chiselled window holds a block the player aligned by hand, so a 15 degree lean is a defect there. An item's
+        /// own <c>randYRotAngle: 0</c> cannot cover it — a chiselled block gets its DisplayableAttributes from
+        /// <c>BlockMicroBlock</c>'s IDisplayableProps implementation, which wins over attributes in the resolution
+        /// order, so there is no JSON on the item side to patch.
         /// </summary>
         public bool NoPlacementJitter => Block?.Attributes?["noPlacementJitter"].AsBool(false) ?? false;
 
         /// <summary>
         /// Whether the random resting angle is off for this block, by config or block flag.
-        ///
-        /// This also gated a vertical scale wobble until that was removed on 2026-07-28 —
-        /// see BuildSlotMatrix. The two were briefly gated separately, which left stacks
-        /// gapping and z-fighting with the config off, so if anything random is ever added
-        /// back it reads THIS and not a switch of its own.
         /// </summary>
         private bool JitterSuppressed =>
             UniversalDisplayLibConfig.Current?.PlacementJitter == false || NoPlacementJitter;
@@ -298,6 +275,10 @@ namespace UniversalDisplayLib
 
             if (capi != null)
             {
+                // its frost / snow / rain as it was when it went out of view this session (FrostGlass) - before the meshes
+                RestoreGlass();
+                TakeWeatherHandOff();
+
                 // the animator is made by InitializeAnimator, and only for a block with something to open (Animates)
                 soundHandler = new DisplaySoundHandler(this, capi);
                 EnsureAnimatorCurrent();
@@ -317,20 +298,11 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Every client-side window currently loaded.
         ///
-        /// EXISTS BECAUSE EVENT BUS LISTENERS CANNOT BE UNREGISTERED. `IEventAPI` offers
-        /// `UnregisterCallback` and `UnregisterGameTickListener` and nothing for the event
-        /// bus — `RegisterEventBusListener` is one-way. This block entity used to register
-        /// one per instance for the transform editor, so every window on every chunk load
-        /// added a permanent listener holding that block entity alive: memory that was
-        /// never released, and a handler list that grew for the whole session.
+        /// Exists because event bus listeners cannot be unregistered (`RegisterEventBusListener` is one-way), so one
+        /// per instance would hold every window alive for the session. The mod system registers one listener and walks
+        /// this set: added in Initialize, removed in Cleanup, which runs from all three teardown paths.
         ///
-        /// Now the mod system registers ONE listener and walks this set, which is
-        /// maintained honestly — added in Initialize, removed in Cleanup, and Cleanup runs
-        /// from all three teardown paths. So it tracks what is actually loaded rather than
-        /// everything that ever was.
-        ///
-        /// Client only, main thread only: Initialize and Cleanup both run there, and so
-        /// does the event bus.
+        /// Client only, main thread only: Initialize and Cleanup both run there, and so does the event bus.
         /// </summary>
         public static readonly HashSet<BEUniversalDisplay> LiveClientInstances = new HashSet<BEUniversalDisplay>();
 
@@ -379,14 +351,28 @@ namespace UniversalDisplayLib
 
             // Drives the shared rain-on-glass loop (EnableRainSound / Volume / Range)
             soundHandler?.Tick();
+
+            // the levitating display: items drawn moving up close, still further away (LevitatingDisplay.cs)
+            UpdateHovers();
+            RecheckLeftOutRedraw();
+
+            // frost on the glass in freezing weather (FrostGlass.cs) - every 10 s, redraws only on a change
+            UpdateFrost();
+
+            // rain running down the glass and the frost creeping over it (GlassLayer.cs) - drawn every frame, checked every second
+            UpdateGlassLayer();
+
+            // a shut shutter is dark inside: its moving parts take the light from beside it (BorrowedLight.cs)
+            UpdateBorrowedLight();
+
+            // rocking a little open and back in a strong breeze or storm (WindWobble.cs) - the motion is per frame
+            UpdateWobble();
         }
 
         public override void OnBlockPlaced(ItemStack byItemStack = null)
         {
-            // base runs the UDMaterials behaviour, which is where the materials get filled from
-            // the stack. Everything texture-dependent has to happen after this line, not in
-            // Initialize — that runs first, with no variants, and is why a freshly
-            // placed window used to show default textures before correcting itself.
+            // base runs the UDMaterials behaviour, which is where the materials get filled from the stack. Everything
+            // texture-dependent has to happen after this line, not in Initialize, which runs first, with no variants.
             base.OnBlockPlaced(byItemStack);
 
             ClampPaneStatesToBlock();
@@ -402,6 +388,8 @@ namespace UniversalDisplayLib
             if (IsEmbedded) { _removed = true; if (Api?.Side == EnumAppSide.Server) AutoBoxes.ReleaseAll(Api.World, Pos, autoHeld); Cleanup(); base.OnBlockRemoved(); return; }
             LiveServerInstances.TryRemove(this, out _);
             if (Api?.Side == EnumAppSide.Server) AutoBoxes.ReleaseAll(Api.World, Pos, autoHeld);
+            HandOffWeather();
+            ForgetGlass();
             FreeGuests();
             _removed = true;
             TellHosts(autoLayout);
@@ -414,6 +402,7 @@ namespace UniversalDisplayLib
         {
             if (IsEmbedded) { _removed = true; Cleanup(); base.OnBlockUnloaded(); return; }
             LiveServerInstances.TryRemove(this, out _);
+            RememberGlass();
             _removed = true;
             TellHosts(autoLayout);
             Cleanup();
@@ -425,12 +414,9 @@ namespace UniversalDisplayLib
             _removed = true;
             RemoveLight();
 
-            // Cleanup here too, matching OnBlockRemoved and OnBlockUnloaded. In practice
-            // breaking sets the block to air and OnBlockRemoved follows, which cleaned up
-            // anyway — but that was an assumption about ordering rather than something
-            // guaranteed, and the asymmetry read as an oversight. Cleanup is idempotent:
-            // the unsubscribe is safe twice, the tick listener is guarded on != 0, and the
-            // disposals null their own fields.
+            // Cleanup here too, matching OnBlockRemoved and OnBlockUnloaded, rather than assuming breaking always leads
+            // to OnBlockRemoved. Cleanup is idempotent: the unsubscribe is safe twice, the tick listener is guarded on
+            // != 0, and the disposals null their own fields.
             Cleanup();
 
             // the items drop at their own size (see ItemScale)
@@ -447,6 +433,8 @@ namespace UniversalDisplayLib
             // Cleanup runs from OnBlockRemoved, OnBlockUnloaded and OnBlockBroken, so a
             // window cannot stay in the set after it has gone.
             LiveClientInstances.Remove(this);
+            ForgetWobbles();
+            StopGlassLayer();
 
             inv.OnAcquireTransitionSpeed -= OnAcquireTransitionSpeed;
             if (_clientTickListener != 0)
@@ -454,6 +442,7 @@ namespace UniversalDisplayLib
                 UnregisterGameTickListener(_clientTickListener);
                 _clientTickListener = 0;
             }
+            ReleaseAnimTick();
             animUtil?.Dispose();
             animUtil = null;
             soundHandler?.Dispose();
@@ -556,15 +545,18 @@ namespace UniversalDisplayLib
             InvalidateBoxes();
             MarkMeshesDirty();
 
-            // Both sides, matching vanilla BlockEntityGroundStorage, which calls
-            // LightUpdate straight out of its interaction handler with no side check.
-            // Light is computed client-side for rendering as well as server-side; if
-            // only the server relights, the client shows nothing until the chunk is
-            // reloaded — which is exactly the "only updates on reload" behaviour.
+            // Both sides, matching vanilla BlockEntityGroundStorage, which calls LightUpdate straight out of its
+            // interaction handler with no side check. Light is computed client-side for rendering as well as
+            // server-side; if only the server relights, the client shows nothing until the chunk is reloaded.
             if (Api != null)
             {
                 RefreshStoredLight();
             }
+
+            PruneFloatTunings();
+
+            // at once, not on the next tick: a new item on a levitating display eases up rather than showing at its height first
+            UpdateHovers();
 
             MarkDirty(true);
         }
@@ -581,9 +573,30 @@ namespace UniversalDisplayLib
             bool changed = (oldLight == null) != (_cachedLightHsv == null)
                 || (oldLight != null && _cachedLightHsv != null && !oldLight.SequenceEqual(_cachedLightHsv));
             if (!changed) return;
-            if (oldLight != null && _cachedLightHsv == null)
-                Api.World.BlockAccessor.RemoveBlockLight(oldLight, Pos);
-            ApplyLight();
+
+            // What the block gives off before and after: the stored items' light, else the block's own
+            // (BlockUniversalDisplay.GetLightHsv). The relight below only ever ADDS light, so an old light that is
+            // brighter or another colour has to be taken away first - not only when nothing is left (the base's own
+            // glow meant the light never went to none).
+            byte[] before = oldLight ?? Block?.LightHsv, after = _cachedLightHsv ?? Block?.LightHsv;
+            if (LightMustBeCleared(before, after))
+                Api.World.BlockAccessor.RemoveBlockLight(before, Pos);
+            if (_cachedLightHsv != null) ApplyLight();
+            // the block's own glow (a levitating base) comes back once the stored light is cleared
+            else if ((after?.Length ?? 0) >= 3 && after[2] > 0 && !_removed && Api.World.BlockAccessor.GetBlock(Pos).Id == Block.Id)
+                Api.World.BlockAccessor.ExchangeBlock(Block.Id, Pos);
+        }
+
+        /// <summary>
+        /// Must the old light be removed before the new one goes in? Yes when there was one and the new one is none,
+        /// dimmer, or another colour; no when it only gets brighter in the same colour (the relight spreads over it).
+        /// Shared with Chiseled Block Display's host light (BEBehaviorChiselShelf).
+        /// </summary>
+        internal static bool LightMustBeCleared(byte[] before, byte[] after)
+        {
+            if (before == null || before.Length < 3 || before[2] == 0) return false;
+            if (after == null || after.Length < 3 || after[2] == 0) return true;
+            return after[2] < before[2] || after[0] != before[0] || after[1] != before[1];
         }
 
         private void UpdateLightCache()
@@ -591,14 +604,13 @@ namespace UniversalDisplayLib
             if (IsEmbedded) return;
             if (Api == null) return;
 
-            // Resolve first, as every path that reads slot.Itemstack.Collectible must: an
-            // unresolved stack reads Collectible as null and is silently skipped, so a
-            // lantern would contribute no light and the window would stay dark until the
-            // next OnContentsChanged — "the light only appears once you touch it".
+            // Resolve first, as every path that reads slot.Itemstack.Collectible must: an unresolved stack reads
+            // Collectible as null and is silently skipped, so a lantern would contribute no light and the window would
+            // stay dark until the next OnContentsChanged.
             //
-            // Both callers (Initialize and OnContentsChanged) are on the main thread, so
-            // this is safe here. The ONE place that must not resolve is the off-thread
-            // particle gate — see HasParticleEmittingItem, which explains why.
+            // Both callers (Initialize and OnContentsChanged) are on the main thread, so this is safe here. The ONE
+            // place that must not resolve is the off-thread particle gate — see HasParticleEmittingItem, which explains
+            // why.
             inv.ResolveBlocksOrItems();
 
             byte bestH = 0, bestS = 0, bestV = 0;
@@ -606,6 +618,7 @@ namespace UniversalDisplayLib
             {
                 ItemStack stack = slot?.Itemstack;
                 if (stack?.Collectible == null) continue;
+                if (StoredGlowIgnored(stack)) continue;
 
                 // GetLightHsv(..., stack), not the raw LightHsv field. For lanterns and
                 // anything else whose brightness depends on stack attributes the field
@@ -616,6 +629,13 @@ namespace UniversalDisplayLib
             }
             _cachedLightHsv = bestV > 0 ? new[] { bestH, bestS, bestV } : null;
         }
+
+        /// <summary>
+        /// A display block (the levitating base) stored ON another display gives no light there - its own faint glow is
+        /// for when it stands on its own. With Lumos installed the window holding it became a dim blue-green light that
+        /// won over a lantern beside it and darkened the area.
+        /// </summary>
+        internal static bool StoredGlowIgnored(ItemStack stack) => stack?.Block is BlockUniversalDisplay;
 
         private void RemoveLight()
         {
@@ -706,39 +726,27 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Our own key inside <c>displayable.windowdisplay</c>, in VOXELS, naming where an
-        /// item's flame actually sits relative to the centre of its box.
+        /// Our own key inside <c>displayable.windowdisplay</c>, in VOXELS, naming where an item's flame actually sits
+        /// relative to the centre of its box.
         ///
-        /// **Presence of this key is what switches particles on at all.** Emitting for
-        /// anything that merely declares particleProperties looked wrong far more often
-        /// than right, because most emitters are not centre-wicked and nothing in JSON
-        /// says where their wick is — vanilla hardcodes those positions in C#
-        /// (<c>BlockOilLamp</c>'s -5/32, <c>BlockBunchOCandles.candleWickPositions</c>) and
-        /// <c>Block.TopMiddlePos</c> is only a box centre. So this is authored per item,
-        /// the same way sizes are, and anything untuned stays silent — which is also what
+        /// **Presence of this key is what switches particles on at all.** Emitting for anything that merely declares
+        /// particleProperties looked wrong far more often than right, because most emitters are not centre-wicked and
+        /// nothing in JSON says where their wick is — vanilla hardcodes those positions in C# (<c>BlockOilLamp</c>'s
+        /// -5/32, <c>BlockBunchOCandles.candleWickPositions</c>) and <c>Block.TopMiddlePos</c> is only a box centre. So
+        /// this is authored per item, the same way sizes are, and anything untuned stays silent — which is also what
         /// vanilla shelves do, so nothing can look broken by default.
         ///
-        /// Read straight off the JSON because <c>DisplayableAttributes</c> is a vanilla
-        /// POCO with no field for it; it ignores keys it does not know, so ours rides
-        /// along harmlessly. <c>particleOffsetByType</c> works for free — Vintage Story's
-        /// own solveByType resolves ByType keys recursively before we ever read this.
+        /// Read straight off the JSON because <c>DisplayableAttributes</c> is a vanilla POCO with no field for it; it
+        /// ignores keys it does not know, so ours rides along harmlessly. <c>particleOffsetByType</c> works for free —
+        /// Vintage Story's own solveByType resolves ByType keys recursively before we ever read this.
         ///
-        /// Authored UNROTATED: the offset is turned by the item's own placement rotation
-        /// at spawn time, so one value stays on the wick however the item or the window is
-        /// turned. Y is measured from the top of the box, where particles already spawn,
-        /// so 0 means "top of the item".
-        /// </summary>
-        /// <summary>
-        /// **The CATEGORY was hardcoded to "windowdisplay" until 2026-08-06**, which quietly made
-        /// this window-only: a block declaring `psurface0-...-cabinetdisplay` reads
-        /// `displayable.cabinetdisplay` for everything else, so its author would write
-        /// `particleOffset` there, and it would never be found. Their candles simply would not
-        /// light, with nothing logged and no way to tell why.
+        /// Authored UNROTATED: the offset is turned by the item's own placement rotation at spawn time, so one value
+        /// stays on the wick however the item or the window is turned. Y is measured from the top of the box, where
+        /// particles already spawn, so 0 means "top of the item".
         ///
-        /// It now asks the surface's own category first and falls back to `windowdisplay`. The
-        /// fallback is not just compatibility for the ~98 patches written against it: an item
-        /// tuned for a window sill should still emit when it is stood on somebody else's shelf,
-        /// since the wick is in the same place either way.
+        /// Asks the surface's own category first, because a block declaring `psurface0-...-cabinetdisplay` has its
+        /// author write `particleOffset` under that category, then falls back to `windowdisplay`: an item tuned for a
+        /// window sill should still emit on somebody else's shelf.
         /// </summary>
         private Vec3f ParticleOffsetFor(CollectibleObject collectible, string category)
         {
@@ -885,6 +893,7 @@ namespace UniversalDisplayLib
 
                 Vec3f local = SlotEmitPosition(kv.Key, kv.Value, offsetVoxels, slots);
                 if (local == null) continue;
+                local = FollowHover(kv.Key, local);   // a levitating item's flame bobs and turns with it
 
                 foreach (AdvancedParticleProperties prop in props)
                 {
@@ -898,27 +907,22 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// The authored wick offset with the entry's OWN display transform applied - the same
-        /// rotation and scale <see cref="GenerateMeshes"/> bakes into the item mesh through
-        /// <c>MeshData.ModelTransform</c>.
+        /// The authored wick offset with the entry's OWN display transform applied - the same rotation and scale <see
+        /// cref="GenerateMeshes"/> bakes into the item mesh through <c>MeshData.ModelTransform</c>.
         ///
-        /// **WITHOUT THIS THE MESH AND THE FLAME ARE IN DIFFERENT FRAMES**, and nothing says so.
-        /// An entry carrying `rotation.y: 45` and `scale: 0.8` - the vanilla oil lamp does -
-        /// draws a lamp turned and shrunk while the offset points straight ahead at full size,
-        /// so the flame sits beside the lamp rather than on its wick. Author it against the
-        /// model and the code puts it where the model went. Found 2026-08-30, when a lamp that
-        /// had been correct for months drifted after its transform was edited: the offset had
-        /// been tuned by eye to cancel the rotation, so changing the rotation broke it silently.
+        /// **WITHOUT THIS THE MESH AND THE FLAME ARE IN DIFFERENT FRAMES**, and nothing says so. An entry carrying
+        /// `rotation.y: 45` and `scale: 0.8` - the vanilla oil lamp does - draws a lamp turned and shrunk while the
+        /// offset points straight ahead at full size, so the flame sits beside the lamp rather than on its wick. Author
+        /// it against the model and the code puts it where the model went.
         ///
-        /// **ROTATION AND SCALE ONLY. Translation and a non-centre `origin` are deliberately
-        /// NOT applied**, because they move the item as a whole rather than turning it about
-        /// itself, and where the item as a whole sits is already the slot's business - see
-        /// SlotEmitPosition, which places it from the surface and the pile below it. Applying
-        /// them here would move the flame twice.
+        /// **ROTATION AND SCALE ONLY. Translation and a non-centre `origin` are deliberately NOT applied**, because
+        /// they move the item as a whole rather than turning it about itself, and where the item as a whole sits is
+        /// already the slot's business - see SlotEmitPosition, which places it from the surface and the pile below it.
+        /// Applying them here would move the flame twice.
         ///
-        /// Reads the transform without calling <c>EnsureDefaultValues</c>: that WRITES to the
-        /// shared attributes object, and this runs on the async particle thread. Every field is
-        /// treated as optional instead, which is the same thing without the race.
+        /// Reads the transform without calling <c>EnsureDefaultValues</c>: that WRITES to the shared attributes object,
+        /// and this runs on the async particle thread. Every field is treated as optional instead, which is the same
+        /// thing without the race.
         /// </summary>
         private static Vec3f TransformedOffset(Vec3f offsetVoxels, DisplayableAttributes dattr)
         {
@@ -946,26 +950,20 @@ namespace UniversalDisplayLib
             return new Vec3f(v.X, v.Y, v.Z);
         }
         /// <summary>
-        /// Where a stored item's particles should come from, in block-local units
-        /// (0..1), rotated to match how the block was placed.
+        /// Where a stored item's particles should come from, in block-local units (0..1), rotated to match how the
+        /// block was placed.
         ///
-        /// Deliberately NOT taken from <see cref="BuildSlotMatrix"/>: that method has a
-        /// history of leaving TfMatrices short an entry when anything throws, and it is
-        /// not worth reshaping for this. The two agree by construction instead —
-        /// centring cancels, since BuildSlotMatrix offsets by -Size/2 and then back by
-        /// +Size/2, leaving the item's centre at surface + slot. The same
-        /// Translate/RotateY chain is reused verbatim so the rotation convention cannot
-        /// drift from the renderer's.
+        /// Not taken from <see cref="BuildSlotMatrix"/>; the two agree by construction: centring cancels, since
+        /// BuildSlotMatrix offsets by -Size/2 and then back by +Size/2, leaving the item's centre at surface + slot.
+        /// The same Translate/RotateY chain is reused verbatim so the rotation convention cannot drift from the
+        /// renderer's.
         ///
-        /// Height is the top of the item's declared box, which is where a flame sits:
-        /// for a vanilla oil lamp that is 2/16, against the 9/64 vanilla itself uses —
-        /// a quarter of a voxel apart.
+        /// Height is the top of the item's declared box, which is where a flame sits.
         ///
-        /// <paramref name="offsetVoxels"/> is the authored wick offset, applied in the
-        /// item's OWN space — rotated by the item's placement rotation before the block's,
-        /// exactly as BuildSlotMatrix rotates the mesh about its own centre. That is what
-        /// keeps a flame on the wick after a wrench turn or on a rotated window. A zero
-        /// offset reduces to the plain centre, which is what candles want.
+        /// <paramref name="offsetVoxels"/> is the authored wick offset, applied in the item's OWN space — rotated by
+        /// the item's placement rotation before the block's, exactly as BuildSlotMatrix rotates the mesh about its own
+        /// centre. That is what keeps a flame on the wick after a wrench turn or on a rotated window. A zero offset
+        /// reduces to the plain centre, which is what candles want.
         /// </summary>
         private Vec3f SlotEmitPosition(string slotId, ItemSlot slot, Vec3f offsetVoxels,
                                        KeyValuePair<string, ItemSlot>[] slots = null)
@@ -988,6 +986,12 @@ namespace UniversalDisplayLib
             // and the mesh, the footprint and this must all read the SAME number.
             float rotDeg = ItemRotationDeg(slotId, dattr, surface);
 
+            // The levitating display's menu turn and tilts (LevitatingDisplay.cs), as BuildSlotMatrix gives the mesh -
+            // the tilts round the item's middle, so the flame stays on a tilted wick. All 0 for anything not levitating.
+            var (floatTilt, floatTiltForward, floatRot, floatOffX, floatOffZ) = FloatPose(loc, slots);
+            rotDeg += floatRot;
+            float midY = dattr.Size.Height / 32f;
+
             // The offset is authored against the MODEL, so it has to go through the entry's own
             // transform before the item's placement rotation - see TransformedOffset.
             Vec3f offset = TransformedOffset(offsetVoxels, dattr);
@@ -1000,12 +1004,17 @@ namespace UniversalDisplayLib
                 .RotateY(MeshAngleRad)
                 .Translate(
                     (surfacePos.X + loc.X) / 16f - 0.5f,
-                    (surfacePos.Y + stackY + dattr.Size.Height) / 16f,
+                    (surfacePos.Y + stackY) / 16f,
                     (surfacePos.Z + loc.Z) / 16f - 0.5f)
                 .RotateY(GameMath.DEG2RAD * rotDeg)
+                .Translate(floatOffX / 16f, 0f, floatOffZ / 16f)   // the levitating menu's move, in the item's own frame
+                .Translate(0f, midY, 0f)
+                .RotateX(GameMath.DEG2RAD * floatTilt)
+                .RotateZ(GameMath.DEG2RAD * floatTiltForward)
+                .Translate(0f, -midY, 0f)
                 .TransformVector(new Vec4f(
                     (offset?.X ?? 0f) / 16f,
-                    (offset?.Y ?? 0f) / 16f,
+                    dattr.Size.Height / 16f + (offset?.Y ?? 0f) / 16f,
                     (offset?.Z ?? 0f) / 16f, 1f)).XYZ;
         }
 
@@ -1014,36 +1023,35 @@ namespace UniversalDisplayLib
         // ── Stacking ─────────────────────────────────────────────────────────
 
         /// <summary>
-        /// How high the base of the item at <paramref name="loc"/> sits above its surface,
-        /// in voxels — the summed declared HEIGHTS of everything already stacked below it.
+        /// How high the base of the item at <paramref name="loc"/> sits above its surface, in voxels — the summed
+        /// declared HEIGHTS of everything already stacked below it.
         ///
-        /// **This was `loc.Y * <the item's own height>`**, which is only the same number when
-        /// every item in a pile is the same height. Anything else floated or sank by the
-        /// difference: a plant is 7 tall, so on a shorter pot it hung in the air above the rim
-        /// and on a taller one it disappeared into it. Its own height says how much room it
-        /// needs, not how far up the thing underneath lifts it.
+        /// Not `loc.Y * <the item's own height>`: that only holds when every item in a pile is the same height, and a
+        /// plant would float above a short pot or sink into a tall one.
         ///
-        /// ONE definition, shared by the mesh, the selection box, the footprint outline, the
-        /// particle origin and the headroom checks. All six derived it separately from the old
-        /// expression, and a preview disagreeing with the placement is this codebase's
-        /// recurring fault — hence a method rather than six copies of the loop.
+        /// ONE definition, shared by the mesh, the selection box, the footprint outline, the particle origin and the
+        /// headroom checks, so a preview cannot disagree with the placement.
         ///
-        /// <paramref name="selfAttr"/> is only a FALLBACK height, used for a level that reads
-        /// back empty or unresolved. Piles are contiguous (taking the bottom item collapses
-        /// the rest down) so that should not happen; when it does, falling back to the old
-        /// uniform-pile arithmetic keeps the item roughly where it was instead of dropping
-        /// the whole stack to the floor.
+        /// <paramref name="selfAttr"/> is only a FALLBACK height, used for a level that reads back empty or unresolved.
+        /// Piles are contiguous (taking the bottom item collapses the rest down) so that should not happen; when it
+        /// does, falling back to uniform-pile arithmetic keeps the item roughly where it was instead of dropping the
+        /// whole stack to the floor.
         ///
-        /// <paramref name="slots"/> lets a caller that already holds a <see cref="SlotsSnapshot"/>
-        /// reuse it. Omitting it takes a fresh one, which is what makes this safe to call off
-        /// the main thread: the live <c>SlotsByslotId</c> must never be touched there.
+        /// <paramref name="slots"/> lets a caller that already holds a <see cref="SlotsSnapshot"/> reuse it. Omitting
+        /// it takes a fresh one, which is what makes this safe to call off the main thread: the live
+        /// <c>SlotsByslotId</c> must never be touched there.
         /// </summary>
         public float StackBaseY(DisplaySlotId loc, DisplaySurface surface,
                                 DisplayableAttributes selfAttr,
                                 KeyValuePair<string, ItemSlot>[] slots = null)
         {
             if (loc != null && FreeData(loc.Encoded) is { } free) return free.RestY;
-            if (loc == null || surface == null || loc.Y <= 0f) return 0f;
+            if (loc == null || surface == null) return 0f;
+
+            // On a levitating display the item rests ABOVE it (LevitatingDisplay.cs) - part of the resting height, so the mesh, the
+            // click box and the headroom check all see the hover height, not only the drawing.
+            float rise = FloatRiseVoxels(loc, slots);
+            if (loc.Y <= 0f) return rise;
 
             slots ??= SlotsSnapshot();
             string category = surface.DisplayCategory ?? BlockBehaviorDisplaySurfaces.DefaultDisplayCategory;
@@ -1056,7 +1064,7 @@ namespace UniversalDisplayLib
                 baseY += below?.Size?.Height ?? fallback;
             }
 
-            return baseY;
+            return baseY + rise;
         }
 
         /// <summary>
@@ -1220,9 +1228,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// True when another window sits directly below this one - a window's own block, or the top
-        /// cell of a tall window (a helper since lib 1.1.4; the old chain's top segment was a window
-        /// block entity and counted, so the helper has to as well).
+        /// True when another window sits directly below this one - a window's own block, or the top cell of a tall
+        /// window.
         /// </summary>
         public bool IsStacked
         {
@@ -1244,15 +1251,10 @@ namespace UniversalDisplayLib
         /// that wants them anyway declares which ones.
         ///
         /// <code>
-        /// // absent                          -> all surfaces hidden when stacked
-        /// "showSurfacesWhenStacked": [0]      // only psurface0 stays usable
-        /// "showSurfacesWhenStacked": [0, 2]   // psurface0 and psurface2 stay usable
+        /// // absent -> all surfaces hidden when stacked
+        /// "showSurfacesWhenStacked": [0] // only psurface0 stays usable
+        /// "showSurfacesWhenStacked": [0, 2] // psurface0 and psurface2 stay usable
         /// </code>
-        ///
-        /// Named for surfaces rather than groups: the pre-psurface content used
-        /// <c>stackingHideGroups</c>, indexing <c>slotGroups</c> and listing what to HIDE.
-        /// Neither groups nor that inversion survive here — this lists what to SHOW, by
-        /// psurface index.
         /// </summary>
         public bool IsSurfaceStacked(int surfaceIndex)
             => IsStacked && IsSurfaceHiddenWhenStacked(surfaceIndex, ShownSurfacesWhenStacked());
@@ -1312,45 +1314,37 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Whether a chiselled design in this slot is FIXED: once placed it cannot be taken
-        /// by hand, turned or nudged. Breaking the block still drops it.
+        /// Whether a chiselled design in this slot is FIXED: once placed it cannot be taken by hand, turned or nudged.
+        /// Breaking the block still drops it.
         ///
-        /// Added 2026-08-07 for the griefing report that also brought the land-claim check in
-        /// <see cref="OnBlockInteractStart"/>. Claims only cover CLAIMED land; on an unclaimed
-        /// build anyone could still right-click the chiselled insert out of a custom window
-        /// and leave a hole. This is the second layer, and it is deliberately narrow.
+        /// Claims (see <see cref="OnBlockInteractStart"/>) only cover CLAIMED land; on an unclaimed build anyone could still right-click the chiselled insert
+        /// out of a custom window and leave a hole. This is the second layer, and it is deliberately narrow.
         ///
         /// TWO conditions, and neither alone is enough:
         ///
-        ///  1. the block lists the psurface in <c>lockChiselledSurfaces</c>. Absent means
+        /// 1. the block lists the psurface in <c>lockChiselledSurfaces</c>. Absent means
         ///     nothing is locked, so no existing block and no modder's block changes
         ///     behaviour until it opts in — same opt-in shape as
         ///     <c>showSurfacesWhenStacked</c>, and the same list-of-psurface-indices format.
-        ///  2. what is actually stored there is a <see cref="BlockMicroBlock"/>.
+        /// 2. what is actually stored there is a <see cref="BlockMicroBlock"/>.
         ///
-        /// The second condition is the point, and it is why this is not simply a "sealed
-        /// surface" flag. A microblock is `IDisplayableProps`, so a chiselled ornament can be
-        /// set on ANY surface this library exposes — locking on type alone would silently
-        /// freeze every chiselled decoration on every window sill in every existing world.
-        /// Locking on surface alone would be worse in the other direction: the custom
-        /// window's psurface0 would swallow anything at all, so a stranger could push junk
-        /// into it that the owner then has to BREAK the window to clear. Requiring both means
-        /// the structural insert is permanent and everything else behaves exactly as before.
+        /// The second condition is the point, and it is why this is not simply a "sealed surface" flag. A microblock is
+        /// `IDisplayableProps`, so a chiselled ornament can be set on ANY surface this library exposes — locking on
+        /// type alone would silently freeze every chiselled decoration on every window sill in every existing world.
+        /// Locking on surface alone would be worse in the other direction: the custom window's psurface0 would swallow
+        /// anything at all, so a stranger could push junk into it that the owner then has to BREAK the window to clear.
+        /// Requiring both means the structural insert is permanent and everything else behaves exactly as before.
         ///
-        /// <code>
-        /// // absent                        -> nothing is locked (every block but customwindow)
-        /// "lockChiselledSurfaces": [ 0 ]   // a chiselled block on psurface0 is there for good
-        /// </code>
+        /// <code> // absent -> nothing is locked (every block but customwindow)
+        /// "lockChiselledSurfaces": [ 0 ] // a chiselled block on psurface0 is there for good </code>
         ///
-        /// AND ONLY THE FIRST ONE PLACED, which is the third condition and the reason
-        /// <see cref="lockedSlotBySurface"/> exists as stored state. The first chiselled block
-        /// fitted to a locked surface is the structural piece; anything chiselled added after
-        /// it is decoration and stays takeable.
+        /// AND ONLY THE FIRST ONE PLACED, which is the third condition and the reason <see cref="lockedSlotBySurface"/>
+        /// exists as stored state. The first chiselled block fitted to a locked surface is the structural piece;
+        /// anything chiselled added after it is decoration and stays takeable.
         ///
-        /// Fails OPEN when the stack cannot be resolved — <see cref="SlotById"/> resolves
-        /// first, so that is close to unreachable here, but refusing to unlock is the safer
-        /// direction of the two: an item wrongly stuck is a bug report with no workaround
-        /// short of breaking the block.
+        /// Fails OPEN when the stack cannot be resolved — <see cref="SlotById"/> resolves first, so that is close to
+        /// unreachable here, but refusing to unlock is the safer direction of the two: an item wrongly stuck is a bug
+        /// report with no workaround short of breaking the block.
         /// </summary>
         public bool IsSlotLocked(string slotId)
         {
@@ -1411,16 +1405,12 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Gives a chiselled design that was placed BEFORE this feature existed its lock.
         ///
-        /// Without this every custom window already standing in a world would stay unlocked
-        /// for good — the claim is recorded at placement time, and those placements are in the
-        /// past. Published content 1.0.2 has been shipping the custom window since 2026-07-27,
-        /// so those windows are the exact ones the griefing report was about.
+        /// Without this every custom window already standing in a world would stay unlocked for good — the claim is
+        /// recorded at placement time, and those placements are in the past.
         ///
-        /// Server side only, once, on load: for each lockable surface with no claim, the
-        /// LOWEST slot id holding a chiselled block takes it. Ordinal string order is not
-        /// meaningful geometry — it is chosen because it is deterministic, so the client and
-        /// server cannot adopt different slots. In practice a window in the wild has exactly
-        /// one chiselled block in it and there is nothing to choose between.
+        /// Server side only, once, on load: for each lockable surface with no claim, the LOWEST slot id holding a
+        /// chiselled block takes it. Ordinal string order is not meaningful geometry — it is chosen because it is
+        /// deterministic, so the client and server cannot adopt different slots.
         /// </summary>
         private void AdoptPreExistingLocks()
         {
@@ -1484,25 +1474,19 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Never returns null, and never reads a field twice.
         ///
-        /// This is called from the RENDER thread while InvalidateBoxes can fire from the
-        /// network thread on any MarkDirty — placing, rotating or a pane sync. The old form
-        /// tested `_padOnlyBoxes` for null, skipped the rebuild, and then returned `_allBoxes`,
-        /// so an invalidation landing between those two statements returned **null** straight
-        /// into vanilla's `BlockGeneric.GetSelectionBoxes`, which dereferences it: an
-        /// instant client crash from the render thread, with nothing logged because the
-        /// throw is in vanilla's frame, not ours.
+        /// This is called from the RENDER thread while InvalidateBoxes can fire from the network thread on any
+        /// MarkDirty — placing, rotating or a pane sync. A null here goes straight into vanilla's
+        /// `BlockGeneric.GetSelectionBoxes`, which dereferences it: an instant client crash with nothing logged.
         ///
-        /// Both fields are snapshotted into locals first so a concurrent invalidation cannot
-        /// pull one out from under the check, either is enough to force a rebuild, and an
-        /// empty array is returned rather than null if it still comes back empty-handed.
-        /// Boxes are cheap to rebuild and a crash is not.
+        /// Both fields are snapshotted into locals first so a concurrent invalidation cannot pull one out from under
+        /// the check, either is enough to force a rebuild, and an empty array is returned rather than null if it still
+        /// comes back empty-handed. Boxes are cheap to rebuild and a crash is not.
         /// </summary>
         public Cuboidf[] GetSelectionBoxes()
         {
-            // CHISEL THROUGH A GROUND PILE (chisel-edit trial, Calm 2026-10-19: "while a chisel is held, let the chisel
-            // reach the block under a Ground Display pile, like stacked chiselled blocks"): on the client, with chisel +
-            // hammer in hand, a followSupport pile offers nothing to aim at, so the aim reaches the chiselled block below.
-            // The chisel guard (ChiselShelfSystem.Chisel) still protects the voxels the pile's items stand on.
+            // CHISEL THROUGH A GROUND PILE: on the client, with chisel + hammer in hand, a followSupport pile offers
+            // nothing to aim at, so the aim reaches the chiselled block below. The chisel guard
+            // (ChiselShelfSystem.Chisel) still protects the voxels the pile's items stand on.
             if (FollowSupport && Api is ICoreClientAPI chiselClient
                 && ChisellingToolsHeld(chiselClient.World.Player?.InventoryManager?.ActiveHotbarSlot, chiselClient.World.Player))
                 return Array.Empty<Cuboidf>();
@@ -1560,13 +1544,10 @@ namespace UniversalDisplayLib
             BlockBehaviorDisplaySurfaces bh = SurfaceBehavior;
             var boxes = new List<Cuboidf>();
 
-            // Resolve BEFORE building, for the same reason OnTesselation does: the item
-            // loop below reads slot.Itemstack.Collectible through GetDisplayableAttributes,
-            // and on an unresolved stack that is null, so dattr comes back null and the
-            // slot's box is skipped without a word. Boxes are rebuilt off the raycast, not
-            // off tesselation, so after a sync they could be built while stacks were still
-            // unresolved — an item then had no box, the ray passed through it and hit the
-            // one below, and the box only appeared once something else forced a rebuild.
+            // Resolve BEFORE building, for the same reason OnTesselation does: the item loop below reads
+            // slot.Itemstack.Collectible through GetDisplayableAttributes, and on an unresolved stack that is null, so
+            // dattr comes back null and the slot's box is skipped without a word. Boxes are rebuilt off the raycast,
+            // not off tesselation, so this can run while stacks are still unresolved after a sync.
             inv.ResolveBlocksOrItems();
 
             // Stacking is constant for the whole rebuild, so it is resolved once here and
@@ -1588,8 +1569,8 @@ namespace UniversalDisplayLib
                 // window above covers it.
                 foreach (CuboidfWithId pad in IsEmbedded ? Array.Empty<CuboidfWithId>() : bh.GridBoxes)
                 {
-                    // (2026-10-17) a pad set below lands in upperPads when its surface is in ANOTHER space (a 2-high shelf's
-                    // upper shelves) - see SetPadCells
+                    // a pad set below lands in upperPads when its surface is in ANOTHER space (a 2-high shelf's upper
+                    // shelves) - see SetPadCells
                     if (stacked)
                     {
                         // An id that will not decode keeps its pad, as it did before —
@@ -1634,7 +1615,6 @@ namespace UniversalDisplayLib
             // per item: the written-footprint box (the SAME on server and client - which other spaces it reaches, so a filler's
             // box list, and the box index the game sends, agree) and the outline drawn there (the client's drawn box)
             var itemReach = new List<(Cuboidf footprint, Cuboidf outline)>();
-            var footprints = new List<Cuboidf>();
             if (bh != null)
             {
                 // Snapshot once for StackBaseY below rather than per item — it measures the
@@ -1678,14 +1658,13 @@ namespace UniversalDisplayLib
                             (surface.VoxelPosition.Y + stackY) / 16f,
                             (surface.VoxelPosition.Z + loc.Z + offset.Z) / 16f);
 
-                    // CLIENT: the outline is measured from the item as it is DRAWN - its own mesh through the same matrix
-                    // the tesselator uses (turn, height, nudge, transform; 2026-10-06). The server has no meshes and keeps
+                    // CLIENT: the outline is measured from the item as it is DRAWN - its own mesh through the same
+                    // matrix the tesselator uses (turn, height, nudge, transform). The server has no meshes and keeps
                     // the written footprint: same boxes, same order, same ids, only the client's outline is shaped.
                     // "outline": "size" in the item's entry (flowers and other crossed-plane models): the written box
                     bool bySize = BlockBehaviorDisplaySurfaces.OutlineFromSize(slot, surface.DisplayCategory);
                     Cuboidf drawn = capi == null || bySize ? null : DrawnItemBox(kv.Key, slot, slots);
                     CuboidfWithId footprint = Rotated(itemBox, DisplaySlotId.PlacedPrefix + kv.Key);
-                    footprints.Add(footprint);
                     if (drawn != null)
                     {
                         var outline = new CuboidfWithId(drawn) { Id = DisplaySlotId.PlacedPrefix + kv.Key };
@@ -1703,7 +1682,6 @@ namespace UniversalDisplayLib
 
             _allBoxes = withItems.ToArray();
             SetPadCells(upperPads);
-            _itemFootprints = footprints.ToArray();
             if (ItemCollision) { _collisionBoxes = null; _collisionWithGuests = null; }
             SetItemCells(itemReach);
         }
@@ -1733,26 +1711,18 @@ namespace UniversalDisplayLib
             // of the floor pad while deciding whether the held container can be placed.
             if (held.Itemstack?.Collectible is ILiquidInterface) return false;
 
-            // Slot ids are local to their owning display. A shelf above this stand can
-            // use the same ids for different items; its placement must not hide ours.
-            // GUARDED (2026-10-12): resolving a SHARED filler asks each owner for its boxes, whose
-            // GetSelectionBoxes asks this again - without the guard that never ends (two External
-            // Shutters open into one gap, anything in hand = stack overflow). Inside, "not placing".
+            // Slot ids are local to their owning display. A shelf above this stand can use the same ids for different
+            // items; its placement must not hide ours. GUARDED: resolving a SHARED filler asks each owner for its
+            // boxes, whose GetSelectionBoxes asks this again - without the guard that never ends (two External Shutters
+            // open into one gap, anything in hand = stack overflow). Inside, "not placing".
             if (inPlacingPreviewCheck) return false;
             inPlacingPreviewCheck = true;
             try { sel = WindowSelection(capi.World.BlockAccessor, sel); }
             finally { inPlacingPreviewCheck = false; }
             if (sel?.Position == null || !sel.Position.Equals(Pos)) return false;
 
-            // The wrench was excluded here so its boxes stayed exposed for rotating a stored
-            // item. Rotation moved to the mouse wheel on 2026-07-30 and the wrench became an
-            // ordinary placeable item, so the exclusion had turned into a nuisance: placed
-            // items kept blocking the pad you were aiming at while trying to put a wrench
-            // down. It now behaves like anything else in hand.
-            //
-            // This does NOT affect swapping. Despite the name, _padOnlyBoxes carries the
-            // frame and pane boxes too — only PLACED ITEM boxes are withheld — so
-            // ctrl+wrench on a frame is unchanged either way. Checked before removing it.
+            // A held wrench behaves like anything else in hand. Swapping is unaffected: despite the name, _padOnlyBoxes
+            // carries the frame and pane boxes too, only placed item boxes are withheld.
 
             DisplaySlotId loc = DisplaySlotId.Decode(sel.SelectionBoxId);
             if (loc == null) return false;
@@ -1762,13 +1732,11 @@ namespace UniversalDisplayLib
                 .GetDisplayableAttributes(held, category);
             if (dattr == null) return false;
 
-            // Expose the item boxes when the held item stacks and something is already at
-            // the aim point, as vanilla does. Pads lie flattened at the surface floor, so a
-            // stack buries them: without this you had to aim at the very base of a stack to
-            // add to it. With the item boxes visible, aiming at ANY item in the stack finds
-            // it by collision and TryStack walks up to the first free level.
-            // FREE STACKING (1.3.1): ANY displayable item can go on top of another, so the item boxes are exposed for
-            // any held item, not only "Stacking" ones (Calm, 2026-10-19: "free form stacking on anything").
+            // Expose the item boxes when the held item stacks and something is already at the aim point, as vanilla
+            // does. Pads lie flattened at the surface floor, so a stack buries them: without this you had to aim at the
+            // very base of a stack to add to it. With the item boxes visible, aiming at ANY item in the stack finds it
+            // by collision and TryStack walks up to the first free level. With free stacking ANY displayable item can
+            // go on top of another, so the item boxes are exposed for any held item, not only "Stacking" ones.
             if ((FreeStackingEnabled || dattr.Behavior == EnumDisplayableBehavior.Stacking)
                 && GetCollidingSlotId(loc, new Cuboidf(dattr.Size)) != null)
             {
@@ -1945,22 +1913,17 @@ namespace UniversalDisplayLib
             // fall through to pane toggles, display placement, swapping or held-item use.
             if (IsHiddenPartBox(AimedBoxId(blockSel))) return true;
 
-            // ── LAND CLAIMS. Nothing here asked permission until 2026-08-07. ──────────
+            // ── LAND CLAIMS. ──────────
             //
-            // Every vanilla container and display block calls this; this mod never did, so a
-            // claim gave a display block no protection at all. Anyone could stand in someone
-            // else's claim and right-click their windows empty. Reported against the older
-            // Custom Window Storage as "the chiselled block can just be right-clicked out of
-            // the frame by anyone and then the window is just a hole" — the same hole existed
-            // here, and on every block any mod builds on this library.
+            // Every vanilla container and display block calls this; without it a claim gives a display block no
+            // protection.
             //
-            // ONE guard at the entry point covers everything the block does: placing, taking,
-            // opening a pane and swapping all arrive through here.
+            // ONE guard at the entry point covers everything the block does: placing, taking, opening a pane and
+            // swapping all arrive through here.
             //
-            // **It returns TRUE, not false.** False falls through to
-            // `BlockUniversalDisplay.OnBlockInteractStart` -> `base`, and the held item would
-            // be PLACED — so a player refused permission to touch the block would end up
-            // building on it instead. True consumes the interaction and nothing happens.
+            // **It returns TRUE, not false.** False falls through to `BlockUniversalDisplay.OnBlockInteractStart` ->
+            // `base`, and the held item would be PLACED — so a player refused permission to touch the block would end
+            // up building on it instead. True consumes the interaction and nothing happens.
             //
             // TryAccess tells the player why itself, so there is no message to write.
             if (blockSel != null
@@ -1984,22 +1947,25 @@ namespace UniversalDisplayLib
             // one both sides agree on, and a divergence here shows up as "the tooltip says
             // one key but a different key works".
             EntityControls controls = byPlayer.WorldData.EntityControls;
+
+            // The levitating display's menu: sneak + right-click with an empty hand (LevitatingDisplay.cs). The server opens it,
+            // because only the server can check the claim (the entry guard above) - as Taxidermy's adjust window does.
+            if (controls.Sneak && (held == null || held.Empty) && FloatMenuSpot(blockSel) is { } floatSpot)
+            {
+                if (world.Side == EnumAppSide.Server) UniversalDisplayLibMod.OpenFloatMenu(byPlayer as IServerPlayer, Pos, floatSpot);
+                return true;
+            }
+
             bool isWrench = held?.Itemstack?.Collectible?.GetTool(held) == EnumTool.Wrench;
 
-            // Ctrl, and only ctrl — what vanilla trains people to reach for, and it must
-            // stay in step with the HotKeyCode the interaction help advertises.
+            // Ctrl, and only ctrl — what vanilla trains people to reach for, and it must stay in step with the
+            // HotKeyCode the interaction help advertises.
             //
-            // This used to be `controls.Sprint || controls.CtrlKey`, which is the bug: it
-            // ORed a rebindable movement ACTION (Sprint) with a raw modifier KEY (CtrlKey),
-            // so which key actually swapped depended on the player's own bindings, and the
-            // behaviour looked intermittent. EntityControls keeps all four separate —
-            // Sneak/Sprint are movement actions, ShiftKey/CtrlKey are modifier keys — and
-            // vanilla reads the KEY for modified block interactions (BEBehaviorMannequin,
-            // BEBehaviorCabinetDoors). It is network-synced: EnumEntityAction.CtrlKey is 13
-            // and EntityControls.ToInt serialises flags[13], so it is safe server-side.
-            //
-            // Reverse-rotation shares the flag, which is fine and always was: swapping
-            // needs the FRAME, rotating needs an ITEM box, so they can never both fire.
+            // Never Sprint: that is a rebindable movement action, so which key swaps would depend on the player's
+            // bindings. EntityControls keeps all four separate — Sneak/Sprint are movement actions, ShiftKey/CtrlKey
+            // are modifier keys — and vanilla reads the KEY for modified block interactions (BEBehaviorMannequin,
+            // BEBehaviorCabinetDoors). It is network-synced: EnumEntityAction.CtrlKey is 13 and EntityControls.ToInt
+            // serialises flags[13], so it is safe server-side.
             bool ctrl = controls.CtrlKey;
 
             bool onFrame = boxId == null
@@ -2014,10 +1980,22 @@ namespace UniversalDisplayLib
                 return BlockSwapHelper.TrySwap(world, Pos, byPlayer, this);
             }
 
-            // 2. Frame or pane click → toggle that pane
+            // 2. Frame or pane click → toggle that pane - or, sneaking with an empty hand, latch it (WindWindows.cs)
             if (onFrame)
             {
                 if (!CanOpen) return false;
+                // SPRINT + right-click, with anything in hand but the wrench
+                if (ctrl && !isWrench && CanLatch)
+                {
+                    if (world.Side == EnumAppSide.Server) ToggleLatch(byPlayer);
+                    return true;
+                }
+                // latched: nobody opens it until whoever latched it unlatches it - its inner doors excepted
+                if (LatchLocks(boxId))
+                {
+                    (byPlayer as IServerPlayer)?.SendIngameError("latched", Lang.Get("universaldisplaylib:latched-locked"));
+                    return true;
+                }
 
                 // a fixed part (frame edge, fixed glass): only the wrench (above) and breaking do anything
                 if (boxId != null && boxId.StartsWith(PartBoxPrefix, StringComparison.Ordinal)) return true;
@@ -2031,6 +2009,13 @@ namespace UniversalDisplayLib
                 {
                     int dash = boxId.IndexOf('-');
                     int.TryParse(dash > 5 ? boxId.Substring(5, dash - 5) : boxId.Substring(5), out paneIndex);
+                }
+
+                // the pane this click really names, however its box id was written - ToggleWindow leaves latched panes out itself
+                if (boxId != WindowBoxId && PaneLatched(paneIndex))
+                {
+                    (byPlayer as IServerPlayer)?.SendIngameError("latched", Lang.Get("universaldisplaylib:latched-locked"));
+                    return true;
                 }
 
                 if (world.Side == EnumAppSide.Server)
@@ -2055,17 +2040,9 @@ namespace UniversalDisplayLib
                     return true;
                 }
 
-                // WRENCH NO LONGER ROTATES A STORED ITEM. Removed 2026-07-30: sprint plus
-                // the mouse wheel does the same job better — any angle, both directions, no
-                // swapping to a tool first — so two ways of doing one thing was all the
-                // wrench was still adding here.
-                //
-                // Deliberately NOT special-cased any more either. Briefly it consumed the
-                // interaction, which stopped the wrench being placed on a sill like any
-                // other item — and with rotation gone there is no reason for it to behave
-                // differently from anything else in your hand. Its remaining job is
-                // ctrl+wrench on a FRAME to swap the window, which is handled well before
-                // this point.
+                // The wrench does not rotate a stored item (sprint + mouse wheel does) and is not special-cased: it can
+                // be placed on a sill like anything else. Its one job is ctrl+wrench on a frame to swap the window,
+                // handled before this point.
             }
 
             if (held == null || held.Empty) return TryTake(byPlayer, blockSel);
@@ -2077,9 +2054,8 @@ namespace UniversalDisplayLib
             BlockBehaviorDisplaySurfaces bh = SurfaceBehavior;
             if (bh == null) return false;
 
-            // A placed-item box is a valid aim point now: its decoded X/Y/Z is that item's
-            // own position, so the collision test below finds it and TryStack adds on top.
-            // Rejecting it here was the other half of "you must aim at the bottom one".
+            // A placed-item box is a valid aim point: its decoded X/Y/Z is that item's own position, so the collision
+            // test below finds it and TryStack adds on top.
             DisplaySlotId loc = DisplaySlotId.Decode(blockSel?.SelectionBoxId);
             if (loc == null) return false;
 
@@ -2092,6 +2068,12 @@ namespace UniversalDisplayLib
             string category = surface.DisplayCategory ?? "shelf";
             DisplayableAttributes dattr = BlockBehaviorDisplaySurfaces.GetDisplayableAttributes(held, category);
             if (dattr == null) return false;
+            // The levitating display (LevitatingDisplay.cs): the standalone block's one centred spot, and the old column stacking
+            // onto a base on any display - before free stacking, which would let the item land off-centre.
+            if (IsFloatBlock) return TryPutOnFloatBlock(byPlayer, held, surface, dattr, loc);
+            if (loc.IsPlacedItem && TryResolveFloatStack(loc, dattr, byPlayer, out DisplaySlotId floatTarget,
+                                                         out float floatRot, out bool floatAllowed))
+                return TryPutFloatStack(byPlayer, held, floatTarget, floatRot, floatAllowed);
             if (FreeStackingEnabled && loc.IsPlacedItem)
                 return TryPutFreeStack(byPlayer, blockSel, loc, dattr);
 
@@ -2104,16 +2086,12 @@ namespace UniversalDisplayLib
             // so the model, the box and the collision all agree from the first frame.
             int placeRot = PlacementRotation.ForSurface(Api, byPlayer, this, surface);
 
-            // AIMING AT AN ITEM ALREADY THERE MEANS STACKING ONTO IT, so inherit that item's
-            // angle — and inherit it HERE, before the fit checks below, not later in
-            // TryStack.
+            // AIMING AT AN ITEM ALREADY THERE MEANS STACKING ONTO IT, so inherit that item's angle — and inherit it
+            // HERE, before the fit checks below, not later in TryStack.
             //
-            // That ordering is the whole bug: the bounds check runs on the held item's
-            // footprint, and a base item turned 90° sits at a depth that only its turned
-            // footprint fits. An unrotated item aimed at it therefore failed "out of bounds"
-            // and never reached the stacking path at all — reported as "no room" and as the
-            // stack not detecting the item below. Deciding the angle first makes every check
-            // below measure the shape the item will actually be placed as.
+            // The bounds check runs on the held item's footprint, and a base item turned 90° sits at a depth only its
+            // turned footprint fits, so an unrotated item aimed at it would fail "out of bounds" and never reach
+            // stacking.
             if (loc.IsPlacedItem && inv.SlotsByslotId.TryGetValue(loc.Encoded, out ItemSlot baseSlot)
                 && !baseSlot.Empty)
             {
@@ -2128,7 +2106,7 @@ namespace UniversalDisplayLib
             Size3f itemSize = BlockBehaviorDisplaySurfaces.RotatedFootprint(
                 dattr.Size, placeRot + SurfaceFacingDeg(surface));
 
-            Size3f fitSize = FitSize(itemSize); // the checks below give half a voxel on every side (lib 1.3.1)
+            Size3f fitSize = FitSize(itemSize); // the checks below give half a voxel on every side
             if (surfaceSize.Width < fitSize.Width || (!UnboundedStacking && surfaceSize.Height < fitSize.Height) || surfaceSize.Length < fitSize.Length)
             {
                 (Api as ICoreClientAPI)?.TriggerIngameError(this, "toolarge", Lang.Get("shelfhelp-toolarge-error"));
@@ -2177,10 +2155,8 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Adds the held item on top of the stack starting at <paramref name="collidingSlotId"/>.
         ///
-        /// <paramref name="rotDeg"/> is carried through so a stacked item keeps the angle the
-        /// player chose, exactly as a ground-level one does. Without it, everything added to
-        /// a pile landed unrotated no matter what the preview showed — which reads in play as
-        /// "rotation does not work when stacking".
+        /// <paramref name="rotDeg"/> is carried through so a stacked item keeps the angle the player chose, exactly as
+        /// a ground-level one does.
         /// </summary>
         private bool TryStack(IPlayer byPlayer, string collidingSlotId, DisplayableAttributes dattr, int rotDeg)
         {
@@ -2277,13 +2253,12 @@ namespace UniversalDisplayLib
             bool freeTaken = freeStacks.ContainsKey(slotId);
             if (IsSlotSurfaceStacked(slotId)) return false;
 
-            // A locked chiselled design is not takeable by hand — see IsSlotLocked. Break the
-            // block and it drops with everything else, which is exactly what the report asked
-            // for ("only retrievable by breaking the block").
+            // A locked chiselled design is not takeable by hand — see IsSlotLocked. Break the block and it drops with
+            // everything else.
             //
-            // TRUE, not false, and for the same reason the claims guard returns true: false
-            // falls through to base. The hand is empty on this path so there is nothing to
-            // place, but the two refusals should not differ on a detail that subtle.
+            // TRUE, not false, and for the same reason the claims guard returns true: false falls through to base. The
+            // hand is empty on this path so there is nothing to place, but the two refusals should not differ on a
+            // detail that subtle.
             if (IsSlotLocked(slotId))
             {
                 (Api as ICoreClientAPI)?.TriggerIngameError(this, "displaylocked",
@@ -2311,10 +2286,9 @@ namespace UniversalDisplayLib
 
             // Collapse anything stacked above into the gap.
             //
-            // The angle has to travel with the item. customRotationDegBySlot is keyed by SLOT,
-            // so moving only the Itemstack left the angle behind on the old key and the item
-            // fell back to its placement jitter — reported as "take the bottom one and the
-            // next one up reverts to its original position".
+            // The angle has to travel with the item. customRotationDegBySlot is keyed by SLOT, so moving only the
+            // Itemstack would leave the angle behind on the old key and the item would fall back to its placement
+            // jitter.
             if (freeTaken) ForgetFreeStack(slotId);
             if (!freeTaken)
             {
@@ -2338,19 +2312,15 @@ namespace UniversalDisplayLib
                     }
                 }
 
-                // THE NUDGE IS DROPPED, NOT CARRIED — the one place height deliberately
-                // parts company with rotation, on the author's call 2026-08-05 after seeing
-                // it in game.
+                // THE NUDGE IS DROPPED, NOT CARRIED — the one place height deliberately parts company with rotation.
                 //
-                // An angle is absolute: an item turned 90° is still turned 90° wherever it
-                // ends up. A nudge is RELATIVE to whatever it was resting on — you push a
-                // plant down to settle it into a pot — so once that pot is taken the number
-                // is measured against something that is no longer there, and carrying it
-                // sinks the plant into the sill by however far it was pushed.
+                // An angle is absolute: an item turned 90° is still turned 90° wherever it ends up. A nudge is RELATIVE
+                // to whatever it was resting on — you push a plant down to settle it into a pot — so once that pot is
+                // taken the number is measured against something that is no longer there, and carrying it sinks the
+                // plant into the sill by however far it was pushed.
                 //
-                // Both keys go: the one being vacated, and the one the item is arriving
-                // from. It lands at its natural height, which is what it would have had if
-                // placed there directly.
+                // Both keys go: the one being vacated, and the one the item is arriving from. It lands at its natural
+                // height, which is what it would have had if placed there directly.
                 customHeightBySlot?.Remove(gap.Encoded);
                 customHeightBySlot?.Remove(above.Encoded);
 
@@ -2431,11 +2401,11 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// A surface's pads (-1: every surface) turned with this block - KEPT, not rebuilt per call (Calm 2026-10-22: the
-        /// ghost lagged holding a hammer or knife over a chiselled block or bare ground). PadSelectionAt is asked twice a
-        /// frame there (the ghost and the outline), and turning every pad of a carved floor's 1,024 on each call made
-        /// hundreds of thousands of boxes a second for the garbage collector. Rebuilt when the turn, the grids
-        /// (GridGeneration) or the block's behaviour change. Read on the main thread; a race only builds a list twice.
+        /// A surface's pads (-1: every surface) turned with this block - KEPT, not rebuilt per call. PadSelectionAt is
+        /// asked twice a frame there (the ghost and the outline), and turning every pad of a carved floor's 1,024 on
+        /// each call made hundreds of thousands of boxes a second for the garbage collector. Rebuilt when the turn, the
+        /// grids (GridGeneration) or the block's behaviour change. Read on the main thread; a race only builds a list
+        /// twice.
         /// </summary>
         private CuboidfWithId[] RotatedPads(BlockBehaviorDisplaySurfaces bh, int surfaceIndex)
         {
@@ -2476,26 +2446,13 @@ namespace UniversalDisplayLib
         /// <summary>
         /// FNV-1a of a slot id - the same number in every game process. string.GetHashCode is NOT: .NET seeds it
         /// differently each launch, so the jitter angle it fed changed on every restart and could differ between a
-        /// server and its clients (fixed 2026-10-22). Same reasoning as WornShapeMesh.Fnv and StartFloat.
+        /// server and its clients. Same reasoning as WornShapeMesh.Fnv and StartFloat.
         /// </summary>
         private static int StableHash(string s)
         {
             uint h = 2166136261;
             foreach (char c in s ?? "") { h ^= c; h *= 16777619; }
             return (int)h;
-        }
-
-        /// <summary>Same value, resolved from the slot when the caller has no dattr to hand.</summary>
-        private float PlacementJitterDeg(string slotId)
-        {
-            if (!inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot slot) || slot.Empty) return 0f;
-
-            DisplaySlotId loc = DisplaySlotId.Decode(slotId);
-            DisplaySurface surface = SurfaceBehavior?.GetSurface(loc?.SurfaceIndex ?? -1);
-            if (surface == null) return 0f;
-
-            return PlacementJitterDeg(slotId, BlockBehaviorDisplaySurfaces
-                .GetDisplayableAttributes(slot, surface.DisplayCategory ?? "shelf"));
         }
 
         /// <summary>
@@ -2530,19 +2487,16 @@ namespace UniversalDisplayLib
         {
             // Jitter is ADDED HERE, at read time, never baked into the stored value.
             //
-            // It used to be folded in when the item was placed, which froze it: an item put
-            // down at an angle kept its random nudge for good, so switching the jitter config
-            // off left every rotated and wrenched item exactly as it was while untouched ones
-            // went square. Reported as "the ones placed at the angles aren't covered by the
-            // config", and it was right.
+            // Folded in when placed, it would freeze: switching jitter off would leave rotated items as they were while
+            // untouched ones went square.
             //
-            // Deriving it on every read means the config, the block flag and the item's own
-            // randYRotAngle all apply RETROACTIVELY to everything already placed — turn
-            // jitter off and the whole world lines up, turn it back on and it returns.
+            // Deriving it on every read means the config, the block flag and the item's own randYRotAngle all apply
+            // RETROACTIVELY to everything already placed — turn jitter off and the whole world lines up, turn it back
+            // on and it returns.
             //
-            // The stored value is therefore the CHOSEN angle alone: 0 for an untouched item,
-            // 90 for one placed turned, whatever the wrench has stepped to. That also makes
-            // wrench steps exact multiples rather than multiples plus a frozen offset.
+            // The stored value is therefore the CHOSEN angle alone: 0 for an untouched item, 90 for one placed turned,
+            // whatever the wrench has stepped to. That also makes wrench steps exact multiples rather than multiples
+            // plus a frozen offset.
             return ChosenRotationDeg(slotId) + PlacementJitterDeg(slotId, dattr);
         }
 
@@ -2595,13 +2549,10 @@ namespace UniversalDisplayLib
                 return false;
             }
 
-            // ONE LEVEL TALL, not size.Height. ContentCuboids measures Y in stack levels —
-            // loc.Y to loc.Y + 1 — while Size.Height is in voxels. Passing the voxel height
-            // made an item at level 1 span levels 1..1+height and "collide" with everything
-            // stacked above it, so only the bottom of a stack could ever be turned. Rotation
-            // only ever competes for space on its OWN level.
-            // Overlap applies to turning too, or an item could be PLACED overlapping its
-            // neighbour and then refused permission to turn in the space it already occupies.
+            // ONE LEVEL TALL, not size.Height. ContentCuboids measures Y in stack levels — loc.Y to loc.Y + 1 — while
+            // Size.Height is in voxels. The voxel height would make an item collide with everything stacked above it.
+            // Rotation only ever competes for space on its OWN level. Overlap applies to turning too, or an item could
+            // be PLACED overlapping its neighbour and then refused permission to turn in the space it already occupies.
             string hit = GetCollidingSlotId(loc, new Cuboidf(0f, 0f, 0f, size.Width, 1f, size.Length));
             return hit == null
                    || hit == slotId
@@ -2698,7 +2649,7 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Size an item already on a surface up or down one step, from the Resize key + wheel packet (lib 1.4.0).
+        /// Size an item already on a surface up or down one step, from the Resize key + wheel packet.
         /// Refused, like raising, while something rests on it; refused when the new size does not fit where it sits -
         /// the size is tried on the item and the same check a turn uses decides, then put back if it fails.
         /// </summary>
@@ -2743,18 +2694,16 @@ namespace UniversalDisplayLib
         /// </param>
         private bool TryRotateItem(string slotId, IPlayer byPlayer, bool reverse, float stepDeg = 0f)
         {
-            // Turning an item with others on top is allowed (Calm, 2026-10-19: "turning is fine").
+            // Turning an item with others on top is allowed.
             customRotationDegBySlot ??= new Dictionary<string, float>();
 
             float step = stepDeg > 0f
                 ? Math.Clamp(stepDeg, 5f, 90f)
                 : (UniversalDisplayLibConfig.Current?.RotationStepDegrees ?? 22.5f);
 
-            // Seed from the CHOSEN angle, which is 0 for an item that has never been turned.
-            // The jitter no longer needs seeding in: StoredRotationDeg adds it on every read,
-            // so the rendered angle is chosen + jitter and stepping the chosen part by 15
-            // moves what you see by exactly 15. That is what the old jitter-seeding was
-            // working around, less directly.
+            // Seed from the CHOSEN angle, which is 0 for an item that has never been turned. StoredRotationDeg adds the
+            // jitter on every read, so the rendered angle is chosen + jitter and stepping the chosen part by 15 moves
+            // what you see by exactly 15.
             customRotationDegBySlot.TryGetValue(slotId, out float current);
 
             float wanted = (current + (reverse ? -step : step) + 360f) % 360f;
@@ -2773,41 +2722,22 @@ namespace UniversalDisplayLib
             customRotationDegBySlot[slotId] = wanted;
             if (IsEmbedded) RefreshEmbeddedEffects();
 
-            // The selection boxes are derived from item state, so they have to go with the
-            // meshes. Without this the client kept a stale set from the moment of rotating
-            // until the server's packet arrived and FromTreeAttributes invalidated for it —
-            // which is why rotating made boxes disappear and re-opening a pane, which does
-            // invalidate, brought them all back.
+            // The selection boxes are derived from item state, so they have to go with the meshes. Without this the
+            // client keeps a stale set until the server's packet arrives, and boxes disappear meanwhile.
             InvalidateBoxes();
             MarkMeshesDirty();
             MarkDirty(true);
 
-            // NO RELIGHT HERE — an `ApplyLight()` call was tried on 2026-07-31 and REVERTED.
-            //
-            // The theory was decent: a candle does not flash when a window is opened or
-            // closed, but does when the candle itself is rotated, and the only difference
-            // between those two paths is that the toggle relights via SyncStateVariant. So
-            // the relight looked like the thing CLEANING UP after the re-tesselation rather
-            // than the thing causing the flash.
-            //
-            // It made no difference at all in game. The likelier explanation for the
-            // toggle/rotate difference is far duller: **opening a window moves a large
-            // animated pane and plays a sound, which masks a subtle flicker; rotating an item
-            // changes almost nothing else on screen, so the flicker is the only thing moving
-            // and the eye goes straight to it.**
-            //
-            // Do not reinstate this. It relights on every wheel notch, which is real work for
-            // no observed benefit.
+            // No relight here: an `ApplyLight()` call made no difference in game and would relight on every wheel
+            // notch.
             return true;
         }
 
         // ── Panes ────────────────────────────────────────────────────────────
 
         /// <summary>
-        /// Sets one pane. A tall window is ONE block entity since lib 1.1.4 (the single-controller
-        /// system in src/reach/), so there are no linked segments to keep in step any more - the
-        /// LinkedOpenPacket that used to push a pane change to every segment's client ahead of the
-        /// block entity sync is gone with the chains (2026-10-05).
+        /// Sets one pane. A tall window is ONE block entity (src/reach/), so there are no linked segments to keep in
+        /// step.
         /// </summary>
         public void SetPaneState(int index, bool open)
         {
@@ -2838,8 +2768,9 @@ namespace UniversalDisplayLib
         {
             FrameBoxGroup[] groups = SurfaceBehavior?.FrameBoxGroups ?? Array.Empty<FrameBoxGroup>();
             if (paneStates.Length < groups.Length) ClampPaneStatesToBlock();
+            // latched: only the panes the latch leaves free (inner doors - WindWindows.LatchLocks)
             int[] panes = Enumerable.Range(0, Math.Min(groups.Length, paneStates.Length))
-                .Where(i => !string.IsNullOrEmpty(groups[i].AnimOpen)).ToArray();
+                .Where(i => !string.IsNullOrEmpty(groups[i].AnimOpen) && (!_latched || !groups[i].SealsRoom)).ToArray();
             bool anyShut = panes.Any(i => !paneStates[i]);
             foreach (int i in panes)
             {
@@ -2902,55 +2833,18 @@ namespace UniversalDisplayLib
             ITreeAttribute snapshot = new TreeAttribute();
             ToTreeAttributes(snapshot);
 
-            // `(synchronize, relight, strict)` — synchronize FALSE, relight TRUE. BOTH of
-            // those have been changed and changed back; neither is a free choice.
+            // `(synchronize, relight, strict)`: synchronize FALSE, relight TRUE. Neither is a free choice.
             //
-            // synchronize:true was tried 2026-07-27 and is a straight regression — the same
-            // note sits in BlockSwapHelper.
+            // synchronize:true is a straight regression (see BlockSwapHelper).
             //
-            // **relight:false was tried 2026-07-31 and REVERTED. Do not retry it without
-            // reading this.** The reasoning for it was sound and is still true: a relight
-            // here cannot change a single light value. `ChunkIlluminator` (engine side,
-            // 1.22.5) propagates from `GetLightAbsorptionAt` and never reads `SideSolid` or
-            // `SideOpaque` at all — 13 references to absorption, zero to either — and every
-            // window blocktype declares `lightAbsorption: 0` with `sideopaque: all false` in
-            // BOTH states. What the open/closed variants differ in is `sideSolid`, which
-            // drives room sealing and attachment, not light.
-            //
-            // It was aimed at the open/close light FLASH and did not fix it. The flash turned
-            // out not to live here at all: **rotating a stored item does it too**, and
-            // `TryRotateItem` touches no light code whatever — the one thing the two share is
-            // `MarkDirty(true)`. Worse, the author reported the flash reading *more*
-            // noticeable without the relight. That is plausible rather than surprising: with
-            // it ON the engine recomputes and pushes correct values straight after the
-            // exchange, so a stale client-side value is actively corrected instead of being
-            // left to resolve on its own.
-            //
-            // The observation beats the reasoning, as it has every other time in this project.
-            // `(synchronize, relight, strict)` — synchronize FALSE, relight TRUE. Both have
-            // been changed and changed back; neither is a free choice.
-            //
-            // synchronize:true was tried 2026-07-27 and is a straight regression — same note
-            // in BlockSwapHelper.
-            //
-            // **relight:false was tried TWICE on 2026-07-31 and reverted both times. The
-            // second attempt was MEASURED. Do not try it a third time:**
+            // relight:false was measured and reverted, do not retry it:
             //
             //   | open/close | relight:true | relight:false |
             //   | frames at block-light 0 | 4 and 2 | 4 and 5 |
             //
-            // No better opening, two and a half times worse closing. The author had already
-            // called that by eye on the first attempt, before any measurement existed.
-            //
-            // The reasoning FOR removing it was sound and is still true — a relight here
-            // cannot change a light VALUE, since ChunkIlluminator propagates from
-            // `GetLightAbsorptionAt` and never reads `SideSolid`/`SideOpaque`, and every
-            // window blocktype is `lightAbsorption: 0` in both states. It is simply not the
-            // whole story: the relight also re-spreads light that `MarkDirty(true)` has
-            // already knocked out, so removing it leaves the hole open for longer.
-            //
-            // "This work cannot change the result" and "removing this work is free" are
-            // different claims, and this is what the difference costs.
+            // A relight here cannot change a light VALUE (ChunkIlluminator propagates from `GetLightAbsorptionAt` and
+            // every window blocktype is `lightAbsorption: 0` in both states), but it also re-spreads light that
+            // `MarkDirty(true)` has already knocked out, so removing it leaves the hole open for longer.
             IBlockAccessor relightAccessor = Api.World.GetBlockAccessor(false, true, false);
             relightAccessor.ExchangeBlock(targetBlock.Id, Pos);
 
@@ -3009,25 +2903,18 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Everything the animator mesh depends on: which shape it draws, and which
-        /// materials (UDMaterials, formerly ARL's variants) textured it. Same for the open and closed block variants, so
-        /// toggling a pane does not rebuild it.
+        /// Everything the animator mesh depends on: which shape it draws, and which materials (UDMaterials) textured
+        /// it. Same for the open and closed block variants, so toggling a pane does not rebuild it.
         ///
-        /// The variants matter because the animation shapes declare a default glass
-        /// texture (leaded) that the materials overwrite (MaterialTextureSource) — but the materials
-        /// are filled from the placed stack in OnBlockPlaced, which runs *after*
-        /// Initialize. The first build therefore textures with empty variants and
-        /// falls back to that default. Every non-north facing happened to hide this,
-        /// because the placement angle changed and forced a rebuild; north is angle 0,
-        /// matched what was already built, and kept the leaded glass.
+        /// The variants matter because the animation shapes declare a default glass texture (leaded) that the materials
+        /// overwrite (MaterialTextureSource) — but the materials are filled from the placed stack in OnBlockPlaced,
+        /// which runs *after* Initialize. The first build therefore textures with empty variants and falls back to that
+        /// default.
         /// </summary>
         private string ResolveAnimatorShapeKey()
         {
-            // Keyed on the block's OWN shape. There used to be an `animationShapePath`
-            // branch for content keeping its animations in a separate file; every shape in
-            // this mod is single-file — static geometry, psurface markers and animations
-            // together, split at tesselation time by `animatedElements` — so it was dead.
-            // Removed 2026-07-30.
+            // Keyed on the block's OWN shape: every shape in this mod is single-file (static geometry, psurface markers
+            // and animations together, split at tesselation time by `animatedElements`).
             string variantKey = GetBehavior<BEBehaviorMaterials>()?.Key ?? "";
             return "block:" + Block.Shape?.Base + "|" + variantKey;
         }
@@ -3061,26 +2948,26 @@ namespace UniversalDisplayLib
         {
             if (capi == null || Block == null) return false;
 
-            // NOTHING TO OPEN, NO ANIMATOR (code check 2026-10-22): shelves, piles and tables used to get one too - a
-            // second copy of the model on the GPU and 4-5 renderers called every frame, never drawing anything.
+            // Nothing to open, no animator: otherwise shelves, piles and tables would keep a second copy of the model
+            // on the GPU and 4-5 renderers called every frame.
             if (!Animates)
             {
-                if (animUtil != null) { animUtil.Dispose(); animUtil = null; _animatorShapeKey = null; _animatorAngleRad = float.NaN; }
+                if (animUtil != null) { ReleaseAnimTick(); animUtil.Dispose(); animUtil = null; _animatorShapeKey = null; _animatorAngleRad = float.NaN; }
                 return false;
             }
 
             if (!MaterialsReady) return false;
 
-            // Keyed on the animation shape, NOT the block id. Toggling a pane runs
-            // SyncStateVariant, which exchanges the block for its open/closed variant —
-            // a different block id but the same animation shape. Rebuilding on block id
-            // therefore tore the animator down mid-animation and restarted it from the
-            // default pose, which is the close-bounce-open-close stutter.
+            // Keyed on the animation shape, NOT the block id. Toggling a pane runs SyncStateVariant, which exchanges
+            // the block for its open/closed variant — a different block id but the same animation shape. Rebuilding on
+            // block id would tear the animator down mid-animation.
             bool shapeChanged = ResolveAnimatorShapeKey() != _animatorShapeKey;
             bool angleChanged = float.IsNaN(_animatorAngleRad) || Math.Abs(_animatorAngleRad - MeshAngleRad) > 0.001f;
             if (!shapeChanged && !angleChanged) return false;
 
             InitializeAnimator();
+            // a new animator has none of the wobble's held animation (WindWobble.cs): start that over from shut
+            ForgetWobbles();
 
             // The pose right after a build is placement or chunk load, not a player
             // opening something — jump straight to it instead of animating from the
@@ -3111,6 +2998,47 @@ namespace UniversalDisplayLib
         private int _animatesBlockId = -1;
         private bool _animates;
 
+        /// <summary>
+        /// THE PANES' ANIMATION ADVANCES BEFORE THEY ARE DRAWN. Vanilla's animation util (which moves the animation on
+        /// a frame) and the pane's renderer (which draws it) are both Opaque renderers at RenderOrder 1, so the game
+        /// may run them either way round: drawn first, a pane shows LAST frame's pose, while the glass layer (frost,
+        /// snow, rain - drawn after the see-through pass) uses this frame's - a frame apart, which shows on a fast open
+        /// or close but not on the slow wind wobble. The util's own Opaque turn is taken off and called from
+        /// PaneAnimTicker at RenderOrder 0.9 - always first, so the pane and its layer use the same pose.
+        /// </summary>
+        void TakeOverAnimTick()
+        {
+            if (capi == null || animUtil == null) return;
+            capi.Event.UnregisterRenderer(animUtil, EnumRenderStage.Opaque);
+            _animTicker = new PaneAnimTicker(animUtil, this);
+            capi.Event.RegisterRenderer(_animTicker, EnumRenderStage.Opaque, "universaldisplaylib-panetick");
+        }
+
+        void ReleaseAnimTick()
+        {
+            if (_animTicker == null) return;
+            capi?.Event.UnregisterRenderer(_animTicker, EnumRenderStage.Opaque);
+            _animTicker = null;
+        }
+
+        PaneAnimTicker _animTicker;
+
+        /// <summary>Calls the animation util's frame update ahead of every RenderOrder 1 renderer (see TakeOverAnimTick).</summary>
+        sealed class PaneAnimTicker : IRenderer
+        {
+            readonly AnimationUtil util;
+            readonly BEUniversalDisplay be;
+            public PaneAnimTicker(AnimationUtil util, BEUniversalDisplay be) { this.util = util; this.be = be; }
+            public double RenderOrder => 0.9;
+            public int RenderRange => 99;
+            public void OnRenderFrame(float deltaTime, EnumRenderStage stage)
+            {
+                be.ApplyBorrowedLight();
+                util.OnRenderFrame(deltaTime, stage);
+            }
+            public void Dispose() { }
+        }
+
         private void InitializeAnimator()
         {
             if (capi == null || Block == null) return;
@@ -3119,16 +3047,16 @@ namespace UniversalDisplayLib
             _animatorShapeKey = ResolveAnimatorShapeKey();
             _animatorAngleRad = MeshAngleRad;
 
+            ReleaseAnimTick();
             animUtil?.Dispose();
             animUtil = new BlockEntityAnimationUtil(capi, this);
+            TakeOverAnimTick();
 
             try
             {
                 string[] animatedElements = Block.Attributes?["animatedElements"].AsArray<string>(null);
 
-                // The block's OWN shape, always. The `animationShapePath` branch that used
-                // to sit here loaded a separate animation file; every shape in this mod is
-                // single-file, so it never ran. Removed 2026-07-30.
+                // The block's OWN shape: every shape in this mod is single-file.
                 AssetLocation loc = Block.Shape?.Base?.Clone().WithPathPrefixOnce("shapes/").WithPathAppendixOnce(".json");
                 Shape animShape = loc == null ? null : capi.Assets.TryGet(loc)?.ToObject<Shape>();
                 string cacheKey = "universaldisplaylib-" + Block.Code;
@@ -3139,7 +3067,7 @@ namespace UniversalDisplayLib
                     return;
                 }
 
-                ITexPositionSource texSource = BuildBlockTextureSource(animShape, Block.Shape?.Base?.ToString());
+                ITexPositionSource texSource = BuildBlockTextureSource(animShape);
 
                 var meta = new TesselationMetaData
                 {
@@ -3161,10 +3089,8 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Drives one animation per pane group at the configured speed.
         ///
-        /// There is deliberately no "instant" mode. An earlier version forced
-        /// AnimationSpeed/EaseIn/EaseOut to 100 when re-initialising, which is what
-        /// made every pane snap instead of slide — the animation itself was running
-        /// at 100x, not just the correction.
+        /// There is deliberately no "instant" mode: forcing AnimationSpeed/EaseIn/EaseOut to 100 when re-initialising
+        /// makes every pane snap instead of slide.
         /// </summary>
         private void UpdateAnimationState()
         {
@@ -3188,50 +3114,28 @@ namespace UniversalDisplayLib
             // which is the snap. Full weight on both sides avoids both.
             float speed = snap ? 1000f : (UniversalDisplayLibConfig.Current?.AnimationSpeedValue ?? 1f);
 
-            // EaseInSpeed is NOT in per-second terms. Vanilla scales dt by the animation
-            // speed BEFORE applying it (RunningAnimation.Progress: `dt *=
-            // GetCurrentAnimationSpeed(...)`, then
-            // `EasingFactor += (1 - EasingFactor) * |dt| * EaseInSpeed`), so a flat 100
-            // eases in four times slower at the config's slowest setting than at normal,
-            // and sixteen times slower than at its fastest.
+            // EaseInSpeed is NOT in per-second terms. Vanilla scales dt by the animation speed BEFORE applying it
+            // (RunningAnimation.Progress: `dt *= GetCurrentAnimationSpeed(...)`, then `EasingFactor += (1 -
+            // EasingFactor) * |dt| * EaseInSpeed`), so a flat 100 eases in four times slower at the config's slowest
+            // setting than at normal, and sixteen times slower than at its fastest.
             //
-            // THAT IS THE CLOSE STUTTER, measured 2026-08-02. While the incoming animation
-            // climbs to full weight the outgoing one is already gone, so for those frames
-            // the pane renders the DEFAULT pose — which is the closed pose. Invisible when
-            // opening, because default is where an opening window starts; a snap shut and
-            // back when closing. It also worsens with framerate: a smaller dt means more
-            // frames spent below full weight.
+            // While the incoming animation climbs to full weight the outgoing one is already gone, so for those frames
+            // the pane renders the default pose, the closed pose: a snap shut and back when closing, worse at higher
+            // framerates. Dividing by the speed cancels vanilla's multiplication, so the incoming animation reaches
+            // full weight on its first frame at every setting.
             //
-            // Dividing by the speed cancels vanilla's multiplication, so the incoming
-            // animation reaches full weight on its FIRST frame at every setting — which is
-            // what the fastest setting already did, and the author confirmed there is no
-            // stutter there. Nothing needs easing into anyway: each animation's frame 0 is
-            // the pose the pane is already in.
-            //
-            // EASE OUT IS THE SAME BUG AND MUST BE FIXED WITH IT. The shapes declare
-            // `onActivityStopped: EaseOut`, so a stopped animation does not vanish — it
-            // fades over frames, through the same speed-scaled dt. Its held open pose is
-            // then ADDED to the incoming close animation's frame 0, which is ALSO the open
-            // pose, so the pane swings to roughly twice the opening for a few frames. That
-            // is the -30 double-count the older comments describe, and with the ease-in
-            // fixed it was what remained: no longer a snap to closed, but a wobble.
-            //
-            // THIS IS WHY THREE EARLIER ONE-SIDED ATTEMPTS FAILED, and why an earlier note
-            // here saying "ease out stays flat, do not make them symmetric" was wrong.
-            // Fixing either side alone trades one artifact for the other: a fast ease-out
-            // with a slow ease-in leaves the gap that collapses to the default pose (the
-            // snap), and a fast ease-in with a slow ease-out leaves the overlap that
-            // double-counts (the wobble). Only both together give a clean handover — the
-            // outgoing pose is gone on the same frame the incoming reaches full weight,
-            // and the two poses are identical at that instant, so nothing moves.
-            // BOTH sides, and they only work as a pair — see below.
-            float easeIn = 10000f / speed;
-            float easeOut = 10000f / speed;
+            // Ease out must match. The shapes declare `onActivityStopped: EaseOut`, so a stopped animation fades
+            // through the same speed-scaled dt, and its held open pose is ADDED to the incoming close animation's frame
+            // 0, also the open pose: the pane swings to about twice the opening. Fixing either side alone trades the
+            // snap for that wobble; only both together give a clean handover.
 
             for (int i = 0; i < groups.Length && i < paneStates.Length; i++)
             {
                 FrameBoxGroup group = groups[i];
                 if (string.IsNullOrEmpty(group.AnimOpen) || string.IsNullOrEmpty(group.AnimClose)) continue;
+                // wobbling in the wind: its frame is set by hand (WindWobble.cs) - unless it has just been opened (or, an
+                // open wobble, shut), when the held animation gets its speed back and the ordinary change goes on from there
+                if (WobbleHolds(i)) continue;
 
                 // opened to its fallback (90 degrees, no room for the full swing): that pair plays instead
                 string animOpen = OpenAnimFor(i), animClose = CloseAnimFor(i);
@@ -3250,7 +3154,7 @@ namespace UniversalDisplayLib
                     // Halloween: a haunted pane SLAMS shut - its close plays SlamSpeedFactor times faster
                     // (a rattling pane flaps both ways at that speed)
                     float paneSpeed = !snap && (_rattle || _slamFast && !paneStates[i]) ? speed * SlamSpeedFactor : speed;
-                    // and a haunted pane CREEPS open (Calm: "the windows opening slowly then slamming")
+                    // and a haunted pane CREEPS open
                     if (!snap && !_rattle && _hauntOpenSeen == i && paneStates[i]) paneSpeed = speed * HauntOpenSpeedFactor;
                     // the pane's own speed (FrameBoxGroup.AnimSpeed) on top - a heavy door slower, a drawer quicker
                     if (!snap && group.AnimSpeed > 0f && group.AnimSpeed != 1f) paneSpeed *= group.AnimSpeed;
@@ -3280,11 +3184,12 @@ namespace UniversalDisplayLib
         {
             if (capi == null) return false;
 
-            // Resolve BEFORE generating. GenerateMeshes reads slot.Itemstack.Collectible
-            // for every slot; on an unresolved stack that is null, GetDisplayableAttributes
-            // returns null, the slot is skipped, and meshesGenerated is still set to true —
-            // so the item stays invisible until something else happens to invalidate.
-            // That is the "disappears on open/close, sometimes comes back" behaviour.
+            // Read before _floatingSlots is: a change made during this pass then counts as not drawn yet (RecheckLeftOutRedraw)
+            _leftOutDrawn = _leftOutVersion;
+
+            // Resolve BEFORE generating. GenerateMeshes reads slot.Itemstack.Collectible for every slot; on an
+            // unresolved stack that is null, GetDisplayableAttributes returns null, the slot is skipped, and
+            // meshesGenerated is still set to true so the item stays invisible until something else invalidates.
             inv.ResolveBlocksOrItems();
 
             // ExchangeBlock (open/closed variant sync, and wrenchSwapTo) swaps the block
@@ -3299,14 +3204,9 @@ namespace UniversalDisplayLib
 
             if (!meshesGenerated) GenerateMeshes();
 
-            // SNAPSHOT, because this runs on the TESSELATION THREAD. Enumerating the live
-            // collection threw "Collection was modified" whenever the main thread touched the
-            // inventory during a pass, and the block then rendered wrong until something
-            // invalidated it again — reported as the shape briefly turning.
-            //
-            // Every other off-main-thread reader here already snapshots; this was the one that
-            // did not. `SlotsSnapshot` also swallows a throw from ToArray itself, which is the
-            // same race one level down.
+            // SNAPSHOT, because this runs on the TESSELATION THREAD: enumerating the live collection throws "Collection
+            // was modified" whenever the main thread touches the inventory during a pass. `SlotsSnapshot` also swallows
+            // a throw from ToArray itself.
             foreach (var kv in SlotsSnapshot())
             {
                 ItemSlot slot = kv.Value;
@@ -3391,6 +3291,8 @@ namespace UniversalDisplayLib
                                           out DisplaySlotId target, out float rotDeg, out bool allowed,
                                           BlockSelection selection = null, IPlayer player = null)
         {
+            // the levitating display's rules first, exactly as TryPut takes them (LevitatingDisplay.cs)
+            if (TryResolveFloatStack(aimed, heldAttr, player, out target, out rotDeg, out allowed)) return true;
             if (FreeStackingEnabled && selection != null)
                 return TryResolveFreeStack(aimed, heldAttr, selection, player ?? (Api as ICoreClientAPI)?.World.Player,
                     out target, out rotDeg, out allowed);
@@ -3399,14 +3301,12 @@ namespace UniversalDisplayLib
             DisplaySurface surface = SurfaceBehavior?.GetSurface(aimed?.SurfaceIndex ?? -1);
             if (surface == null || heldAttr?.Size == null) return false;
 
-            // TryGetValue, NOT inv[...]. `InventoryInfinite` CREATES a slot on demand, so the
-            // indexer mutates `SlotsByslotId` — and this runs every frame from the ghost and
-            // the outline, while the TESSELATION THREAD enumerates that same collection in
-            // OnTesselation. That threw "Collection was modified" mid-tesselation and left the
-            // block rendered wrong for a frame: the "shape briefly turning" glitch.
+            // TryGetValue, NOT inv[...]. `InventoryInfinite` CREATES a slot on demand, so the indexer mutates
+            // `SlotsByslotId` — and this runs every frame from the ghost and the outline, while the TESSELATION THREAD
+            // enumerates that same collection in OnTesselation. That throws "Collection was modified" mid-tesselation.
             //
-            // The walk always ends on an EMPTY level, so the creating form was guaranteed to
-            // add an entry on every single frame. TryPut uses TryGetValue for the same reason.
+            // The walk always ends on an EMPTY level, so the creating form was guaranteed to add an entry on every
+            // single frame. TryPut uses TryGetValue for the same reason.
             DisplaySlotId cursor = aimed;
             while (true)
             {
@@ -3452,18 +3352,8 @@ namespace UniversalDisplayLib
         public static Cuboidf MeshBounds(MeshData mesh, float[] matrix)
         {
             if (mesh?.xyz == null || mesh.VerticesCount == 0 || matrix == null) return null;
-            float[] e = meshExtents.GetValue(mesh, m =>
-            {
-                float[] b = { float.MaxValue, float.MaxValue, float.MaxValue, float.MinValue, float.MinValue, float.MinValue };
-                for (int i = 0; i < m.VerticesCount; i++)
-                    for (int a = 0; a < 3; a++)
-                    {
-                        float v = m.xyz[i * 3 + a];
-                        if (v < b[a]) b[a] = v;
-                        if (v > b[a + 3]) b[a + 3] = v;
-                    }
-                return b;
-            });
+            // what is visible - else every vertex, as before
+            float[] e = meshExtents.GetValue(mesh, m => VisibleExtent.Of(m) ?? RawExtent(m));
             float[] lo = { float.MaxValue, float.MaxValue, float.MaxValue }, hi = { float.MinValue, float.MinValue, float.MinValue };
             foreach (float x in new[] { e[0], e[3] }) foreach (float y in new[] { e[1], e[4] }) foreach (float z in new[] { e[2], e[5] })
                 for (int a = 0; a < 3; a++)
@@ -3473,6 +3363,20 @@ namespace UniversalDisplayLib
                     if (v > hi[a]) hi[a] = v;
                 }
             return new Cuboidf(lo[0], lo[1], lo[2], hi[0], hi[1], hi[2]);
+        }
+
+        /// <summary>A mesh's extent from every vertex.</summary>
+        static float[] RawExtent(MeshData m)
+        {
+            float[] b = { float.MaxValue, float.MaxValue, float.MaxValue, float.MinValue, float.MinValue, float.MinValue };
+            for (int i = 0; i < m.VerticesCount; i++)
+                for (int a = 0; a < 3; a++)
+                {
+                    float v = m.xyz[i * 3 + a];
+                    if (v < b[a]) b[a] = v;
+                    if (v > b[a + 3]) b[a + 3] = v;
+                }
+            return b;
         }
 
         /// <summary>Client: the box round the placement ghost - the same mesh and matrix the ghost is drawn with.</summary>
@@ -3514,12 +3418,8 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Transform for one stored item, or null if the slot cannot be placed yet.
         ///
-        /// Split out of GenerateMeshes so OnTesselation can recompute a missing entry
-        /// on the spot. Any transient failure during generation — an unresolved stack,
-        /// a surface not parsed yet, a throw out of the block mesh build — used to
-        /// leave TfMatrices short an entry, and the render loop skipped that item
-        /// outright until something else invalidated the meshes. That is the item
-        /// vanishing on the first interaction after a world load.
+        /// Split out of GenerateMeshes so OnTesselation can recompute a missing entry on the spot. A transient failure
+        /// during generation would otherwise leave TfMatrices short an entry, and the render loop skips that item.
         /// </summary>
         private float[] BuildSlotMatrix(string slotId, ItemSlot slot, out DisplayableAttributes dattr,
                                         float? rotationOverrideDeg = null,
@@ -3550,28 +3450,23 @@ namespace UniversalDisplayLib
             float stackY = SlotRestY(loc, surface, dattr, slots, heightOverrideVoxels);
 
             // ONE definition of the angle, shared with the footprint and the particles.
-            // All three used to compute it separately, and this one REPLACED the jitter with
-            // the chosen angle rather than adding to it — so a rotated item rendered exactly
-            // square while its box was measured at chosen + jitter. Model and box disagreeing
-            // is the same class of bug as wrenching turning the model but not its footprint.
             //
-            // ItemRotationDeg is chosen + jitter + surface facing, the facing added last so
-            // wrench steps stay relative to it: changing a surface's facing turns everything
-            // already on it and keeps relative angles.
+            // ItemRotationDeg is chosen + jitter + surface facing, the facing added last so wrench steps stay relative
+            // to it: changing a surface's facing turns everything already on it and keeps relative angles.
             //
-            // The override exists only for the placement ghost, which is previewing an item
-            // that has no stored angle yet. It is a parameter rather than a second copy of
-            // the arithmetic for the reason spelled out above.
+            // The override exists only for the placement ghost, which is previewing an item that has no stored angle
+            // yet.
             float rotDeg = rotationOverrideDeg ?? ItemRotationDeg(slotId, dattr, surface);
 
-            // NO HEIGHT JITTER. There used to be a +/-3.3% vertical scale wobble here,
-            // removed 2026-07-28: randomness in an item's ANGLE reads as natural, randomness
-            // in its HEIGHT does not — two identical ingots are not different heights. It
-            // also cost more than it gave, since a stack of items at slightly different
-            // heights shows gaps where they fall short and z-fights where they overlap.
-            // Only the resting angle is random now.
-            // The item's size (the Resize key, lib 1.4.0) round its own bottom centre, after its turn - dattr.Size is
-            // already the sized one, so the centring above matches.
+            // The levitating display's menu (LevitatingDisplay.cs): an extra turn, and two tilts round the item's middle. In the
+            // matrix, not only the moving copy, so a still item (far away, or the animation off) shows them too.
+            var (floatTilt, floatTiltForward, floatRot, floatOffX, floatOffZ) = FloatPose(loc, slots);
+            rotDeg += floatRot;
+            float midY = dattr.Size.Height / 32f;
+
+            // No height jitter: two identical ingots are not different heights, and a stack at slightly different
+            // heights shows gaps and z-fights. The item's size (the Resize key) goes round its own bottom centre, after
+            // its turn: dattr.Size is already the sized one, so the centring above matches.
             float scale = ItemScale.For(slot);
             return new Matrixf()
                 .Translate(0.5f, 0f, 0.5f)
@@ -3583,6 +3478,11 @@ namespace UniversalDisplayLib
                     (surfacePos.Z + loc.Z + offset.Z) / 16f)
                 .Translate(-0.5f + dattr.Size.Width / 2f / 16f, 0f, -0.5f + dattr.Size.Length / 2f / 16f)
                 .RotateY(GameMath.DEG2RAD * rotDeg)
+                .Translate(floatOffX / 16f, 0f, floatOffZ / 16f)   // the levitating menu's move, in the item's own frame
+                .Translate(0f, midY, 0f)
+                .RotateX(GameMath.DEG2RAD * floatTilt)
+                .RotateZ(GameMath.DEG2RAD * floatTiltForward)
+                .Translate(0f, -midY, 0f)
                 .Scale(scale, scale, scale)
                 .Translate(-0.5f, 0f, -0.5f)
                 .Values;
@@ -3672,7 +3572,8 @@ namespace UniversalDisplayLib
                     TexSource = source,
                     IgnoreElements = ignore
                 }, materialShape, out MeshData materialMesh);
-                if (source.Waiting) return null;   // a texture is still being put in the atlas - this block is redrawn then
+                // a texture is still being put in the atlas - this block is redrawn then
+                if (source.Waiting) return null;
                 cache[key] = materialMesh;
                 return materialMesh.Clone();
             }
@@ -3689,7 +3590,7 @@ namespace UniversalDisplayLib
             return mesh;
         }
 
-        private ITexPositionSource BuildBlockTextureSource(Shape shape, string nameForLogging)
+        private ITexPositionSource BuildBlockTextureSource(Shape shape)
         {
             var materialsBlock = Block.GetBehavior<BlockBehaviorMaterials>();
             var materialsBe = GetBehavior<BEBehaviorMaterials>();
@@ -3752,37 +3653,30 @@ namespace UniversalDisplayLib
         {
             if (slot == null || slot.Empty) return null;
 
-            // THE KEY IS FIXED BEFORE ANYTHING IS BUILT (2026-10-10). Worked out afterwards, a mesh source that finished in
-            // between (a figurine, a worn-shape backpack - their keys drop "|wait" once built) had its stand-in stored under
-            // the FINISHED key, and kept for the session. Now a stand-in is stored under the "|wait" key it was asked for.
+            // THE KEY IS FIXED BEFORE ANYTHING IS BUILT. Worked out afterwards, a mesh source that finished in between
+            // (a figurine, a worn-shape backpack: their keys drop "|wait" once built) would have its stand-in stored
+            // under the finished key for the session.
             string cacheKey = GetItemMeshCacheKey(slot);
             if (MeshCache.TryGetValue(cacheKey, out MeshData cached) && cached != null) return cached;
 
             CollectibleObject collectible = slot.Itemstack.Collectible;
 
-            // A displayable entry may name its own shape to render instead of the item's,
-            // which is how clothing shows as a folded pile rather than a worn garment —
-            // `displayable.shelf.shape` on upperbody.json points at upperbody-folded. Ignoring
-            // it meant the item tesselated from its normal shape and looked wrong.
+            // A displayable entry may name its own shape to render instead of the item's, which is how clothing shows
+            // as a folded pile rather than a worn garment — `displayable.shelf.shape` on upperbody.json points at
+            // upperbody-folded.
             //
-            // Cached globally on collectible code + shape, not per block entity: the same
-            // garment folds identically in every window, and vanilla keys it the same way.
+            // Cached globally on collectible code + shape, not per block entity: the same garment folds identically in
+            // every window, and vanilla keys it the same way.
             MeshData mesh = null;
             CompositeShape customShape = dattr?.Shape;
             if (customShape != null)
             {
                 string shapeKey = "universaldisplaylib-shape-" + collectible.Code + "-" + customShape;
 
-                // CLONE IT. What comes back is the SHARED cached mesh, and the transform below
-                // is applied with MeshData.ModelTransform, which mutates in place — so without
-                // this every rebuild transforms an already-transformed mesh and the effect
-                // compounds. The block branch further down already clones for the same reason;
-                // this path was missing it.
-                //
-                // Normally invisible because the block entity's own mesh cache means a given
-                // item is usually built once. The transform editor is what exposes it: each
-                // nudge invalidates and rebuilds, so the item shrinks a little every time
-                // until it vanishes — reported 2026-08-02 as "it goes invisible when editing".
+                // CLONE IT. What comes back is the SHARED cached mesh, and the transform below is applied with
+                // MeshData.ModelTransform, which mutates in place — so without this every rebuild transforms an
+                // already-transformed mesh and the effect compounds. The transform editor shows it: each nudge
+                // rebuilds, so the item would shrink until it vanishes.
                 mesh = ObjectCacheUtil.GetOrCreate(capi, shapeKey, () =>
                     capi.TesselatorManager.CreateMesh("display item shape", customShape,
                         (shape, name) => BuildContainedTextureSource(shape, slot, collectible)))
@@ -3791,18 +3685,15 @@ namespace UniversalDisplayLib
 
             // AN EMPTY CUSTOM-SHAPE MESH MUST NOT WIN over the ordinary paths below.
             //
-            // CreateMesh can hand back a mesh with no vertices — a shape that resolved but
-            // produced nothing — and because that is non-null it used to short-circuit
-            // everything after it, so the item rendered as absolutely nothing with no error
-            // anywhere. Vanilla mushrooms do exactly this on their `displayable.shelf` shape;
-            // reported 2026-08-02 as "mushrooms are invisible", with a completely clean log.
+            // CreateMesh can hand back a mesh with no vertices — a shape that resolved but produced nothing — and being
+            // non-null it would short-circuit everything after it, so the item renders as nothing with no error.
+            // Vanilla mushrooms do this on their `displayable.shelf` shape.
             //
-            // Falling through means the worst case is the item's normal appearance rather
-            // than no appearance, which is the right way round for a display mod.
+            // Falling through means the worst case is the item's normal appearance rather than no appearance, which is
+            // the right way round for a display mod.
             //
-            // Logged at Debug so it lands in client-debug.log rather than the main log: it
-            // names the shape and the item, which is the whole diagnosis for this class of
-            // fault, and it costs nothing on the paths that work.
+            // Logged at Debug so it lands in client-debug.log rather than the main log: it names the shape and the
+            // item, which is the whole diagnosis for this class of fault, and it costs nothing on the paths that work.
             if (mesh != null && mesh.VerticesCount == 0)
             {
                 capi.Logger.Debug(
@@ -3815,22 +3706,10 @@ namespace UniversalDisplayLib
             // so the correction below is not even tried (it also decides by the model itself - ClothingExtent).
             bool fromDisplayShape = mesh != null;
 
-            // CLONED, because this one is not ours. Both branches either side of it yield a
-            // mesh we own - GetDefaultBlockMesh is cloned, a tesselated item mesh is fresh -
-            // and this one was the exception, mutated in place a few lines below.
-            //
-            // Most IContainedMeshSource implementations build a fresh mesh per call, so it
-            // never showed. **BlockShapeFromAttributes does not**: clutter caches its meshes by
-            // type in `cMeshes` and GenMesh returns the SHARED instance (public source,
-            // anegostudios/vssurvivalmod, Block/BlockShapeFromAttributes.cs). So we were
-            // applying the display transform to VANILLA'S OWN cached mesh, once per
-            // re-tesselation, compounding it every time - and corrupting that clutter type
+            // CLONED, because this one is not ours. BlockShapeFromAttributes caches its meshes by type in `cMeshes` and
+            // GenMesh returns the SHARED instance (vssurvivalmod Block/BlockShapeFromAttributes.cs), so applying the
+            // display transform in place would compound on every re-tesselation and corrupt that clutter type
             // everywhere in the world, vanilla shelves included.
-            //
-            // Reported as clutter "shrinking to nothing no matter where the slider goes" while
-            // ordinary items tuned fine. A probe proved the data path innocent: the applied
-            // scale and the resolved scale matched exactly on every edit, so the fault had to
-            // be in what the mesh did with it afterwards.
             IContainedMeshSource source = collectible?.GetCollectibleInterface<IContainedMeshSource>();
             MeshData shared = source?.GenMesh(slot, capi.BlockTextureAtlas, Pos);
             // It has a mesh source that gave nothing (yet): the ordinary model below stands in, and so does its size
@@ -3863,12 +3742,9 @@ namespace UniversalDisplayLib
 
                     capi.Tesselator.TesselateItem(stack.Item, out mesh, this);
 
-                    // THE BLANKET FILL IS DELIBERATE - tried the alternative 2026-09-25 and backed
-                    // it out. Keeping a shape's own renderPass made vanilla's Artistic bottle show
-                    // its glass, but ~200 item shapes mark passes, and the crystal skull in the
-                    // Transparent pass showed all its insides through the crystal. Forced opaque
-                    // is what every item has always looked like on a sill; the bottle's solid
-                    // glass is a documented known issue instead.
+                    // THE BLANKET FILL IS DELIBERATE: ~200 item shapes mark passes, and the crystal skull in the
+                    // Transparent pass would show all its insides through the crystal. An item that needs its glass
+                    // gets a displayable shape in a patch, which does not come through here.
                     mesh.RenderPassesAndExtraBits.Fill((short)EnumChunkRenderPass.OpaqueNoCull);
                     _nowTesselatingObj = null;
                     _nowTesselatingShape = null;
@@ -3877,20 +3753,12 @@ namespace UniversalDisplayLib
 
             // NOTHING ON A WINDOWSILL SWAYS IN THE WIND.
             //
-            // Wind is baked into the vertex flags at tesselation, so a plant keeps swaying
-            // once it is on a sill — which looks wrong indoors and is what made displayed
-            // flowers wave about. ANDing with ClearWindBitsMask drops the wind mode and wind
-            // data bits and leaves everything else in the flags untouched.
+            // Wind is baked into the vertex flags at tesselation, so a plant keeps swaying once it is on a sill — which
+            // looks wrong indoors and is what made displayed flowers wave about. ANDing with ClearWindBitsMask drops
+            // the wind mode and wind data bits and leaves everything else in the flags untouched.
             //
-            // Applied to every displayed item rather than only to plants. In practice they
-            // are the same set today, since nothing else placeable declares a wind mode — but
-            // an item is a still object sitting on a shelf whatever it is, so the rule reads
-            // better as "displayed things do not move" than as a plant special case.
-            //
-            // Safe to mutate here: every path above yields a mesh we own — the custom shape
-            // branch clones, the contained-mesh branch clones (it did NOT until 2026-08-10, and
-            // that was the clutter bug), GetDefaultBlockMesh is cloned, and a tesselated item
-            // mesh is fresh.
+            // Safe to mutate here: every path above yields a mesh we own — the custom shape branch clones, the
+            // contained-mesh branch clones, GetDefaultBlockMesh is cloned, and a tesselated item mesh is fresh.
             if (mesh?.Flags != null)
             {
                 for (int i = 0; i < mesh.FlagsCount; i++)
@@ -3912,11 +3780,13 @@ namespace UniversalDisplayLib
                 mesh.Translate(0f, -15f / 32f, 0f);
             }
 
-            // a worn item's own extent, not the invisible seraph it is built on (ClothingExtent, 2026-10-07) - ONLY for a
-            // garment really drawn on the seraph (boots, clothing with no folded model; ClothingExtent checks the model).
-            // A folded shirt took the size of the shirt as worn and floated where a torso would be (Calm, 2026-10-10). Not
-            // for a worn-shape mesh either: the wearer's body is already out of it, its own bounds are right.
+            // a worn item's own extent, not the invisible seraph it is built on - ONLY for a garment really drawn on
+            // the seraph (boots, clothing with no folded model; ClothingExtent checks the model). A folded shirt took
+            // the size of the shirt as worn and floated where a torso would be. Not for a worn-shape mesh either: the
+            // wearer's body is already out of it, its own bounds are right.
             if (mesh != null && !worn && !fromDisplayShape) ClothingExtent.Register(capi, slot, dattr?.Transform, mesh);
+            // so its see-through parts can be traced to its own textures (VisibleExtent)
+            VisibleExtent.NoteOwner(mesh, collectible, customShape);
 
             MeshCache[cacheKey] = mesh;
             if (standIn) StandInMeshes[cacheKey] = 0;
@@ -3933,16 +3803,13 @@ namespace UniversalDisplayLib
         ///      than whatever the shared folded shape happens to declare
         ///   3. a plant's `plantContainable` textures
         ///
-        /// Step 3 is not optional for plants and is why this takes the props at all. Vanilla's
-        /// potted-plant shape, `block/clay/flowerpot/contents`, declares <c>textures: {}</c>
-        /// while its faces use <c>#north</c> — the plant's own colour comes entirely from
-        /// `plantContainable.textures`, one entry per flower. Without this the shape would
-        /// tesselate with no mapping for that code, which is a logged error and a wrong-looking
-        /// plant. Lily of the valley is the one exception: it has a dedicated shape that
-        /// declares all seven of its own textures, so it would have worked either way.
+        /// Step 3 is not optional for plants and is why this takes the props at all. Vanilla's potted-plant shape,
+        /// `block/clay/flowerpot/contents`, declares <c>textures: {}</c> while its faces use <c>#north</c> — the
+        /// plant's own colour comes entirely from `plantContainable.textures`, one entry per flower. Without this the
+        /// shape would tesselate with no mapping for that code, which is a logged error and a wrong-looking plant.
         ///
-        /// The order matches BlockEntityPlantContainer's own indexer, which checks its props
-        /// first and only then falls back to the shape and the contents.
+        /// The order matches BlockEntityPlantContainer's own indexer, which checks its props first and only then falls
+        /// back to the shape and the contents.
         /// </summary>
         private ITexPositionSource BuildContainedTextureSource(Shape shape, ItemSlot slot,
                                                               CollectibleObject collectible)
@@ -4007,33 +3874,10 @@ namespace UniversalDisplayLib
 
         // ── Persistence ──────────────────────────────────────────────────────
 
-        // LEGACY SLOT MIGRATION REMOVED 2026-07-30, and it is worth knowing why it was
-        // never needed and was not merely useless.
-        //
-        // It converted a pre-psurface inventory — the old block entity used an
-        // InventoryGeneric, so slots were saved under integer keys ("0", "1", …) which
-        // DisplaySlotId.Decode rejects. That situation cannot arise here: Window Display
-        // ships as a SEPARATE mod from Window Storage with its own block codes, nothing is
-        // remapped, and no windowdisplay block has ever written an integer slot id. It was
-        // already recorded as "not applicable" rather than merely untested.
-        //
-        // It also ran from FromTreeAttributes, so it re-decoded every slot id of every
-        // window on every load and every server sync, to reach a `return` every time.
-        //
-        // And it was destructive before it validated:
-        //
-        //     inv.SlotsByslotId.Remove(key);            // removed FIRST
-        //     if (stack == null) continue;
-        //     if (!int.TryParse(key, out int index)) continue;   // <- stack dropped here
-        //
-        // Any slot id that was neither a valid DisplaySlotId nor an integer had its slot
-        // removed and its itemstack discarded — silent item loss, with no path back. That
-        // is a poor trade for a migration that cannot fire, which is what settled removing
-        // it rather than fixing the ordering.
-
         public override void FromTreeAttributes(ITreeAttribute tree, IWorldAccessor worldForResolving)
         {
             ReadFreeStacks(tree);
+            ReadFloatTunings(tree);
             EmbeddedFloorVoxels = tree.GetFloat("embeddedFloor");
             base.FromTreeAttributes(tree, worldForResolving);
 
@@ -4042,6 +3886,7 @@ namespace UniversalDisplayLib
             MeshAngleRad = tree.GetFloat("meshAngleRad");
             bool wasSlamFast = _slamFast;
             _slamFast = tree.GetBool("hauntSlam");
+            ReadLatch(tree);
             _rattle = tree.GetBool("hauntRattle");
             string floatSlot = tree.GetString("hauntFloat", null);
             int floatSeq = tree.GetInt("hauntFloatSeq", 0);
@@ -4059,7 +3904,7 @@ namespace UniversalDisplayLib
             }
             _floatSeqSeen = floatSeq;
             int hauntOpen = tree.GetInt("hauntOpen", -1);
-            // at once (Calm: "the squeak is too delayed"); only where to cut it off waits for the rest of this update
+            // at once; only where to cut it off waits for the rest of this update
             if (capi != null && hauntOpen >= 0 && _hauntOpenSeen < 0) PlayHauntCreak(hauntOpen);
             _hauntOpenSeen = hauntOpen;
 
@@ -4076,12 +3921,8 @@ namespace UniversalDisplayLib
 
             // ALWAYS replaced, including with null when the tree carries no rotations.
             //
-            // Only assigning when the attribute is present left stale angles behind, because
-            // ToTreeAttributes omits "rotation" entirely once the dictionary is empty. Take
-            // the last rotated item off a window and the server sends no rotation data at
-            // all, so the client kept its old map — and the next item placed in that slot
-            // rendered at the previous occupant's angle on the client while the server had
-            // it square. The tree is authoritative; treat it as such.
+            // ToTreeAttributes omits "rotation" once the dictionary is empty, so only assigning when present would
+            // leave stale angles on the client. The tree is authoritative.
             customRotationDegBySlot = null;
             if (tree.HasAttribute("rotation"))
             {
@@ -4142,6 +3983,8 @@ namespace UniversalDisplayLib
                     }
                 }
 
+                // the wind waits for this swing to finish before it takes the pane (WindWobble.cs)
+                if (panesChanged && capi != null) _paneMovedAtMs = capi.World.ElapsedMilliseconds;
                 if (panesChanged || reinitialised) UpdateAnimationState();
 
                 // Halloween: the snap - a swoosh as a haunted pane starts to slam, cut off as it lands (PlaySnapSwoosh)
@@ -4157,6 +4000,7 @@ namespace UniversalDisplayLib
                     for (int i = 0; i < paneStates.Length && i < previousPanes.Length; i++)
                         if (previousPanes[i] != paneStates[i]) RaisePaneChanged(this, i, paneStates[i]);
                 soundHandler?.FadeSharedSoundsToCurrentTarget();
+                UpdateHovers();
             }
         }
 
@@ -4164,6 +4008,7 @@ namespace UniversalDisplayLib
         {
             base.ToTreeAttributes(tree);
             WriteFreeStacks(tree);
+            WriteFloatTunings(tree);
             if (IsEmbedded) tree.SetFloat("embeddedFloor", EmbeddedFloorVoxels);
             tree.SetFloat("meshAngleRad", MeshAngleRad);
 
@@ -4200,6 +4045,7 @@ namespace UniversalDisplayLib
                 }
                 tree["lockedslots"] = lockTree;
             }
+            WriteLatch(tree);
             if (_slamFast) tree.SetBool("hauntSlam", true);
             if (_rattle) tree.SetBool("hauntRattle", true);
             if (_hauntOpenPane >= 0) tree.SetInt("hauntOpen", _hauntOpenPane);
@@ -4220,6 +4066,7 @@ namespace UniversalDisplayLib
             {
                 dsc.AppendLine(StateLine());
             }
+            if (_latched) dsc.AppendLine(Lang.Get("universaldisplaylib:info-latched", _latchedByName ?? "?"));
 
             container.ReloadRoom();
 
@@ -4227,26 +4074,15 @@ namespace UniversalDisplayLib
             // multiplier lives in our OnAcquireTransitionSpeed delegate, so it has to
             // be applied here too or the tooltip never moves when a pane opens.
             float perishRate = container.GetPerishRate() * OnAcquireTransitionSpeed(EnumTransitionType.Perish, null, 1f);
-            // a block with no surfaces can store nothing, so the line would only mislead (Calm, 2026-10-13)
+            // a block with no surfaces can store nothing, so the line would only mislead
             if ((SurfaceBehavior?.Surfaces.Length ?? 0) > 0)
                 dsc.AppendLine(Lang.Get("Stored food perish speed: {0}x", Math.Round(perishRate, 2)));
 
-            // The pending placement angle used to be shown here because it was persistent
-            // but otherwise invisible — you saw it when you pressed the key and never
-            // again, so items quietly went on sideways later.
+            // The ghost draws the pending angle while aiming, so it only appears here when the ghost is off.
             //
-            // THE GHOST REPLACED THAT REASON. It draws the item at its actual pending angle
-            // for as long as you are aiming, which is strictly better than a number: you
-            // see the orientation rather than reading it. Dropped from the panel on
-            // 2026-07-29, once the preview was confirmed working in game.
-            //
-            // Still shown when the ghost is switched off, because the angle is invisible
-            // again then. Same fallback as the key-press message, and the same reason.
-            //
-            // (Kept out of the interaction help, then and now: composed help tooltips are
-            // CACHED and not rebuilt — the same reason the ctrl/shift label goes stale after
-            // a rebind — so a live value there would lie. This panel is rebuilt while aiming
-            // at any part of the window, including bare sill.)
+            // (Kept out of the interaction help, then and now: composed help tooltips are CACHED and not rebuilt — the
+            // same reason the ctrl/shift label goes stale after a rebind — so a live value there would lie. This panel
+            // is rebuilt while aiming at any part of the window, including bare sill.)
             if (UniversalDisplayLibConfig.Current?.PlacementGhost != true)
             {
                 int pendingRot = PlacementRotation.For(Api, forPlayer);
@@ -4257,15 +4093,14 @@ namespace UniversalDisplayLib
             }
 
             // Block info is forwarded to the owner, but the player's selection still points at the host shelf / filler
-            // (an item on the top shelf with another shelf above said nothing - Calm 2026-10-16; fix by Codex). Resolve it
-            // the way a click is, before reading our inventory.
+            // . Resolve it the way a click is, before reading our inventory.
             BlockSelection aimed = WindowSelection(Api.World.BlockAccessor, forPlayer?.CurrentBlockSelection);
             string slotId = aimed?.Position?.Equals(Pos) == true ? GetSelectedNonEmptySlotId(aimed) : null;
             if (slotId != null && inv[slotId] is { Empty: false } slot)
             {
-                AppendStoredItemInfo(dsc, slot, perishRate);
+                AppendStoredItemInfo(dsc, slot);
 
-                // its display size, when it has been resized (Calm 2026-10-21: "so we know the size of it")
+                // its display size, when it has been resized
                 float scale = ItemScale.Of(slot.Itemstack);
                 if (Math.Abs(scale - 1f) > 0.0001f)
                     dsc.AppendLine(Lang.Get("universaldisplaylib:item-scale", (int)Math.Round(scale * 100f)));
@@ -4281,12 +4116,8 @@ namespace UniversalDisplayLib
         /// other container in the game rather than inventing a second dialect. It already
         /// includes the item name, so the plain name is only appended when the item has no
         /// transitionable properties at all.
-        ///
-        /// <paramref name="perishRate"/> is passed through as the ripen rate so the figure
-        /// reflects THIS window — the room, and whether a pane is open — instead of a generic
-        /// estimate. That is the same number the "Stored food perish speed" line reports.
         /// </summary>
-        private void AppendStoredItemInfo(StringBuilder dsc, ItemSlot slot, float perishRate)
+        private void AppendStoredItemInfo(StringBuilder dsc, ItemSlot slot)
         {
             ItemStack stack = slot.Itemstack;
             if (stack?.Collectible == null) return;
@@ -4296,15 +4127,11 @@ namespace UniversalDisplayLib
 
             if (props != null && props.Length > 0)
             {
-                // The third argument is a RIPEN rate, not a perish rate — vanilla's own
-                // BlockEntityShelf derives it as a clamped 0..1 "how good a spot is this for
-                // ripening", and PerishableInfoCompact uses it only in the Ripen branch, as
-                // (TransitionHours - TransitionedHours) / HoursPerDay / ripenRate.
+                // The third argument is a RIPEN rate, not a perish rate — vanilla's own BlockEntityShelf derives it as
+                // a clamped 0..1 "how good a spot is this for ripening", and PerishableInfoCompact uses it only in the
+                // Ripen branch, as (TransitionHours - TransitionedHours) / HoursPerDay / ripenRate.
                 //
-                // Passing our perish rate here was wrong: it runs to ~4.8, so anything that
-                // RIPENS reported a "days left to ripen" several times too short. The perish
-                // side was unaffected — that branch divides by the collectible's own
-                // GetTransitionRateMul and never looks at this argument.
+                // Our perish rate runs to ~4.8, which would report a "days left to ripen" several times too short.
                 float ripenRate = GameMath.Clamp((1f - container.GetPerishRate() - 0.5f) * 3f, 0f, 1f);
                 dsc.Append(BlockEntityShelf.PerishableInfoCompact(Api, slot, ripenRate));
             }
@@ -4326,10 +4153,9 @@ namespace UniversalDisplayLib
         }
 
         // ── AutoBoxes Kit (src/autoboxes/, guide 2B + 2C) ────────────────────
-        // The window's boxes are measured from its model, turned by MeshAngleRad, and reach every block the
-        // model does: fillers in the empty ones. The display-surface markers are left out of the measuring,
-        // as they are left out of the mesh.
-        // Every part its own box (Calm, 2026-10-06), all from the model - Reach.PaneBoxes:
+        // The window's boxes are measured from its model, turned by MeshAngleRad, and reach every block the model does:
+        // fillers in the empty ones. The display-surface markers are left out of the measuring, as they are left out of
+        // the mesh. Every part its own box, all from the model - Reach.PaneBoxes:
         //   each Static group - id "part{n}": outlined and solid, wrench + break, a click opens nothing;
         //   other fixed parts - id "solidpart{n}": collision and selection, no outline or right-click action;
         //   each leaf, shut or where its open animation leaves it - id "pane{i}": a click opens / closes that leaf.
@@ -4485,8 +4311,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// The window's OWN spaces (a tall window's upper blocks): the blocks it fills when shut - not the spaces a leaf only
-        /// swings into. Its fillers there seal rooms and hold torches as the window does (IAutoBoxesPartOfOwner, 2026-10-07).
+        /// The window's OWN spaces (a tall window's upper blocks): the blocks it fills when shut - not the spaces a
+        /// leaf only swings into. Its fillers there seal rooms and hold torches as the window does.
         /// </summary>
         public bool IsPartOfOwner(BlockPos cell)
         {
@@ -4507,8 +4333,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Where a shut light-blocking window darkens its fillers: its own spaces that its leaves or Static parts fill, not
-        /// those only trim reaches (Calm, 2026-10-20: the sliding shutters' rails shaded the outside wall beside them).
+        /// Where a shut light-blocking window darkens its fillers: its own spaces that its leaves or Static parts fill,
+        /// not those only trim reaches.
         /// </summary>
         public bool TakesLightAt(BlockPos cell)
         {
@@ -4521,10 +4347,8 @@ namespace UniversalDisplayLib
         private (int blockId, float angle, HashSet<(int x, int y, int z)> cells) lightCells;
 
         /// <summary>
-        /// Server: the fillers in the window's own spaces take its light - dark while its block absorbs light (a shut External
-        /// Shutter), clear otherwise. Done a moment after the change, once Sync's fillers are in place (tried 2026-10-20 for a
-        /// shut 3 high that stayed lit behind; that was cured by keeping the own-space fillers - see SyncFillers - and this
-        /// was kept as tested with it).
+        /// Server: the fillers in the window's own spaces take its light - dark while its block absorbs light (a shut
+        /// External Shutter), clear otherwise. Done a moment after the change, once Sync's fillers are in place.
         /// </summary>
         public void MatchFillerLight()
         {
@@ -4564,23 +4388,22 @@ namespace UniversalDisplayLib
             Cuboidf[] own = autoLayout.Selection.TryGetValue(key, out var boxes) ? boxes : [];
             if (key == (0, 0, 0)) return own;
             Cuboidf[] items = ItemBoxesIn(key);
-            // the placement pads of a surface in that space (2026-10-17) - after the layout, before the items, the same
-            // order on both sides so a click's index means the same box
-            // PADS FIRST (2026-10-17, Calm: the top shelf "shows right on the edge but no area on the shelf") - the layout's
-            // whole frame box tied with the pad at the shelf top and won, as in the own block before pads went first
+            // the placement pads of a surface in that space - after the layout, before the items, the same order on
+            // both sides so a click's index means the same box. Pads first, or the layout's whole frame box ties with
+            // the pad at the shelf top and wins.
             Cuboidf[] pads = _padCells.TryGetValue(key, out var foundPads) ? foundPads : Array.Empty<Cuboidf>();
             Vec3f shift = Api == null ? null : SidingShift.At(Pos, Block);
             return fillerSelectionCache.GetOrAdd(key, _ => new DisplayBoxCache())
                 .Get(own, pads, items, shift?.X ?? 0f, shift?.Z ?? 0f);
         }
 
-        // ── Items reaching past the block (2026-10-10, review point 2: "aiming at higher stacked crocks selects the ground
-        // behind them") ──────────────────────────────────────────────────────────────────────────────────────────────────────
-        // The game tests only the boxes of the block space the aim is passing through (vsapi AABBIntersectionTest walks the
-        // spaces), so an item box reaching above its window was clickable only through the window's own space. Each placed
-        // item's box is now also handed, whole and with its own id, to every other space it reaches - through AutoBoxesAt, so
-        // the window's fillers there (or the UD block standing there, as a guest) outline it and send a click on to the window
-        // with that id. Fillers go only into empty spaces: a real block above is never replaced. Outline only, never solid.
+        // ── Items reaching past the block ──────────────────────────────────────────────────────────────────────────────────────────────────────
+        // The game tests only the boxes of the block space the aim is passing through (vsapi AABBIntersectionTest walks
+        // the spaces), so an item box reaching above its window was clickable only through the window's own space. Each
+        // placed item's box is now also handed, whole and with its own id, to every other space it reaches - through
+        // AutoBoxesAt, so the window's fillers there (or the UD block standing there, as a guest) outline it and send a
+        // click on to the window with that id. Fillers go only into empty spaces: a real block above is never replaced.
+        // Outline only, never solid.
 
         /// <summary>Placed items' boxes in the other spaces they reach (offset -> whole boxes, ids kept). Swapped in whole.</summary>
         volatile Dictionary<(int, int, int), Cuboidf[]> _itemCells = new();
@@ -4597,15 +4420,17 @@ namespace UniversalDisplayLib
         public static IEnumerable<BEUniversalDisplay> LoadedOnServer => LiveServerInstances.Keys;
 
         /// <summary>Server start: a static outlives a world, so the last world's windows must not be walked in this one.</summary>
-        public static void ForgetServerInstances() => LiveServerInstances.Clear();
+        public static void ForgetServerInstances()
+        {
+            LiveServerInstances.Clear();
+            System.Threading.Interlocked.Exchange(ref itemSizesQueued, 0);
+        }
 
         Cuboidf[] ItemBoxesIn((int, int, int) key)
         {
             // current boxes - unless asked from inside this window's own rebuild (a guest asking back), or from where a
-            // rebuild is not safe: then the last ones. REBUILT ONLY ON THE MAIN THREAD, ONCE THE INVENTORY IS SET UP
-            // (2026-10-10, a client crash on load: the game asked a filler's sounds on the 'blockticking' thread, this
-            // rebuilt the boxes there, and inv.ResolveBlocksOrItems dereferenced the not-yet-initialised inventory's Api -
-            // the same trap the particle hooks avoid). Aiming happens on the main thread, so the boxes are current there.
+            // rebuild is not safe: then the last ones. REBUILT ONLY ON THE MAIN THREAD, ONCE THE INVENTORY IS SET UP .
+            // Aiming happens on the main thread, so the boxes are current there.
             if (regenDepth == 0 && CanRebuildBoxesHere()) GetSelectionBoxes();
             // Hosts cache these boxes, including their order for server interaction.
             // Do not bake the current player's temporary placement preview into that
@@ -4623,12 +4448,12 @@ namespace UniversalDisplayLib
             && (capi == null || Environment.CurrentManagedThreadId == RuntimeEnv.MainThreadId);
 
         /// <summary>
-        /// PADS IN THE SPACES ABOVE (2026-10-17, Calm: a 2-high shelf "combining the 2 shelves in a recipe" - "would make
-        /// them look better than stacking"). A surface the model puts in another space (an upper shelf of a 2-high stand)
-        /// had its placement pads only in this block's own box list, and the game tests a space's boxes only when the aim
-        /// passes through that space - so from the front the upper shelf could not be placed on. Each such pad is now also
-        /// handed, whole and with its own id, to the space it is in, exactly as items reaching up are: the filler there
-        /// outlines it and sends the click down here with the pad's id, so placing, the ghost and the wheel all work.
+        /// PADS IN THE SPACES ABOVE. A surface the model puts in another space (an upper shelf of a 2-high stand) had
+        /// its placement pads only in this block's own box list, and the game tests a space's boxes only when the aim
+        /// passes through that space - so from the front the upper shelf could not be placed on. Each such pad is now
+        /// also handed, whole and with its own id, to the space it is in, exactly as items reaching up are: the filler
+        /// there outlines it and sends the click down here with the pad's id, so placing, the ghost and the wheel all
+        /// work.
         /// </summary>
         volatile Dictionary<(int, int, int), Cuboidf[]> _padCells = new();
 
@@ -4642,8 +4467,7 @@ namespace UniversalDisplayLib
                 {
                     if (cell == (0, 0, 0)) continue;
                     // ...but only where the model itself goes on up (a tall stand). The top shelf of every 1-high piece
-                    // sits on the join too, and handed up it put a filler above every stand (Calm 2026-10-17: a second
-                    // box on the top shelf in a siding wall, and lag)
+                    // sits on the join too, and handed up it put a filler above every stand
                     if (Ordered(pad).Y1 < 1f && !autoLayout.Selection.ContainsKey(cell) && !autoLayout.Collision.ContainsKey(cell)) continue;
                     if (!cells.TryGetValue(cell, out var list)) cells[cell] = list = new List<Cuboidf>();
                     list.Add(new CuboidfWithId(AutoBoxes.Whole(Ordered(pad), cell)) { Id = pad.Id });
@@ -4722,9 +4546,10 @@ namespace UniversalDisplayLib
             if (Api?.Side != EnumAppSide.Server) return;
             GetSelectionBoxes();
             var itemCells = _itemCells.Keys.ToHashSet();
-            // + the window's own spaces, open or shut (Calm, 2026-10-21): a 3 high shutter folded open has nothing in its middle
-            // block, and a filler placed there again on shutting did not take the light out of the room behind - only facing
-            // east, where rounding kept one. Kept always, a shut is only ever a clear-to-dark swap on a filler already there.
+            // + the window's own spaces, open or shut: a 3 high shutter folded open has nothing in its middle block,
+            // and a filler placed there again on shutting did not take the light out of the room behind - only facing
+            // east, where rounding kept one. Kept always, a shut is only ever a clear-to-dark swap on a filler already
+            // there.
             var wanted = autoLayout.Selection.Keys.Union(autoLayout.Collision.Keys).Union(itemCells).Union(_padCells.Keys)
                 .Union(OwnSpaces()).ToList();
             autoHeld = AutoBoxes.Sync(Api.World, Pos, wanted, autoHeld);
@@ -4761,15 +4586,21 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>Server: a measured item size arrived - windows holding items may now reach other spaces.</summary>
+        /// <remarks>Many sizes can arrive together, so they share one sweep of the displays rather than one each.</remarks>
         public static void ItemSizesChanged()
         {
             var api = LiveServerInstances.Keys.FirstOrDefault()?.Api;
-            api?.Event.EnqueueMainThreadTask(() =>
+            if (api == null || System.Threading.Interlocked.Exchange(ref itemSizesQueued, 1) == 1) return;
+            api.Event.RegisterCallback(_ =>
             {
+                System.Threading.Interlocked.Exchange(ref itemSizesQueued, 0);
                 foreach (var be in LiveServerInstances.Keys)
                     if (!be._removed && !be.inv.Empty) { be.InvalidateBoxes(); be.ScheduleItemFillerCheck(); }
-            }, "universaldisplaylib-itemsizes");
+            }, ItemSizesSweepMs);
         }
+
+        const int ItemSizesSweepMs = 500;
+        static int itemSizesQueued;
 
         // Physical footprint pieces, never client mesh outlines or placement pads.
         public Cuboidf[] ItemCollisionAt(BlockPos cell)
@@ -4791,15 +4622,15 @@ namespace UniversalDisplayLib
                 .Get(boxes, Array.Empty<Cuboidf>(), items, shift?.X ?? 0f, shift?.Z ?? 0f);
         }
 
-        // ── Guests (Calm, 2026-10-07: "I need all the parts to be clickable the shutter and the window and to have normal
-        // window functions") ─────────────────────────────────────────────────
-        // A leaf that opens into a block another Universal Display block stands in (a classic window into an OPEN External
-        // Shutter's block - the room check lets it, the shutter's leaves being folded away) can have no filler there, so that
-        // part of it was drawn but neither solid nor clickable. The block it is in now carries it: the piece is solid there,
-        // the leaf is outlined there, and a click, a break, the help, the name and the sounds go to the window it belongs to.
-        // Nothing is saved: a block looks round for windows reaching into it when first asked, and a window tells the blocks
-        // it reaches whenever its boxes change (opened, shut, turned, swapped, loaded, removed).
-        // A tall window's upper blocks are not this: there the space holds the other window's filler, which is SHARED.
+        // ── Guests ─────────────────────────────────────────────────
+        // A leaf that opens into a block another Universal Display block stands in (a classic window into an OPEN
+        // External Shutter's block - the room check lets it, the shutter's leaves being folded away) can have no filler
+        // there, so that part of it was drawn but neither solid nor clickable. The block it is in now carries it: the
+        // piece is solid there, the leaf is outlined there, and a click, a break, the help, the name and the sounds go
+        // to the window it belongs to. Nothing is saved: a block looks round for windows reaching into it when first
+        // asked, and a window tells the blocks it reaches whenever its boxes change (opened, shut, turned, swapped,
+        // loaded, removed). A tall window's upper blocks are not this: there the space holds the other window's filler,
+        // which is SHARED.
 
         /// <summary>Id prefix of a guest's box in its host's list: "guest:dx,dy,dz:id" - offset to the window, and the box's own id there.</summary>
         public const string GuestBoxPrefix = "guest:";
@@ -4823,11 +4654,11 @@ namespace UniversalDisplayLib
             {
                 if (dx == 0 && dy == 0 && dz == 0) continue;
                 if (At(ba, Pos.AddCopy(dx, dy, dz)) is not { } other || other._removed) continue;
-                // ITS PLACED ITEMS' BOXES UP TO DATE FIRST (2026-10-11, Calm: a stand's top-shelf items reaching into a shelf
-                // standing above could not be taken). A leaf's boxes exist from load, but the item boxes a window hands to the
-                // spaces above it are only worked out when that window rebuilds its own boxes - so this block could look
-                // before they existed, find nothing and keep that answer (and on the server the box numbers then disagree).
-                // One level deep only: the window's rebuild looks round in turn, and must not start this one again.
+                // ITS PLACED ITEMS' BOXES UP TO DATE FIRST. A leaf's boxes exist from load, but the item boxes a window
+                // hands to the spaces above it are only worked out when that window rebuilds its own boxes - so this
+                // block could look before they existed, find nothing and keep that answer (and on the server the box
+                // numbers then disagree). One level deep only: the window's rebuild looks round in turn, and must not
+                // start this one again.
                 if (regenDepth < 2 && other.CanRebuildBoxesHere()) other.GetSelectionBoxes();
                 if (!list.Contains(other) && (other.AutoBoxesAt(Pos).Length > 0 || other.AutoCollisionAt(Pos).Length > 0)) list.Add(other);
             }
@@ -4938,9 +4769,9 @@ namespace UniversalDisplayLib
             }
         }
 
-        // ── Fallback (UDAutoBoxes "fallback", 2026-10-06) ─────────────────────
-        // A pane whose full swing has no room opens to its fallback instead (the External Shutter: 90 degrees
-        // instead of 180 when something - a wall, another shutter, another shutter's folded leaf - is beside it).
+        // ── Fallback ─────────────────────
+        // A pane whose full swing has no room opens to its fallback instead (the External Shutter: 90 degrees instead
+        // of 180 when something - a wall, another shutter, another shutter's folded leaf - is beside it).
 
         /// <summary>Per pane: opened to its fallback. Saved and synced as "paneFallback"; kept after closing so the matching close animation plays.</summary>
         bool[] paneFallback = Array.Empty<bool>();
@@ -4993,8 +4824,7 @@ namespace UniversalDisplayLib
             if (fallback.Value.close != null) yield return fallback.Value.close;
         }
 
-        // ── Halloween (2026-10-12, Calm: "all the windows trigger an event on halloween, sounds change and the windows randomly
-        // open and then slam shut") ── driven by HalloweenWindows. ROOM-SAFE: the open/closed variant is not swapped while
+        // ── Halloween ── driven by HalloweenWindows. ROOM-SAFE: the open/closed variant is not swapped while
         // haunted, so rooms stay sealed and a shut External Shutter stays dark. A player can still shut it first.
         bool _haunted;
         /// <summary>Synced: the pane shutting now was haunted - its close plays fast.</summary>
@@ -5002,7 +4832,7 @@ namespace UniversalDisplayLib
         const float SlamSpeedFactor = 5f;
         /// <summary>A haunted pane opens at this fraction of its normal speed - slow, with the creak all the way.</summary>
         const float HauntOpenSpeedFactor = 0.35f;
-        // ── Halloween, floating items (Calm: "make items on the shelves float, as long as they're not stacked") ──
+        // ── Halloween, floating items ──
         /// <summary>Server: the items floating now, slot ids joined by '|' (synced with a sequence number and the length), null when none.</summary>
         string _floatSlotServer;
         /// <summary>Several items float one after another, this far apart - lifting and landing.</summary>
@@ -5020,6 +4850,7 @@ namespace UniversalDisplayLib
         public bool HauntFloat(Random rnd, int floatMs, bool several = false)
         {
             if (_removed || _floatSlotServer != null || Api?.Side != EnumAppSide.Server) return false;
+            if (IsFloatBlock) return false;   // the levitating display's item already floats (LevitatingDisplay.cs)
             var filled = SlotsSnapshot().Where(kv => !kv.Value.Empty).Select(kv => kv.Key).ToList();
             var loners = filled.Where(id =>
             {
@@ -5030,7 +4861,7 @@ namespace UniversalDisplayLib
             }).ToList();
             if (loners.Count == 0) return false;
 
-            // one, or (Calm: "can we have several things float at once?") up to four of them, in a random order
+            // one, or up to four of them, in a random order
             var chosen = loners.OrderBy(_ => rnd.Next()).Take(several ? Math.Min(loners.Count, 2 + rnd.Next(3)) : 1).ToList();
             _floatSlotServer = string.Join("|", chosen);
             _floatSeq++;
@@ -5052,8 +4883,8 @@ namespace UniversalDisplayLib
         void StartFloat(string slotId, int ms, int seq)
         {
             if (capi == null || _removed || _floatingSlots.ContainsKey(slotId) || inv?.Api == null) return;
-            // RESOLVE FIRST (2026-10-12, a client crash): the stack has just arrived with the sync and does not know its
-            // item yet - the trap OnTesselation guards against. Main thread here, so resolving is safe.
+            // RESOLVE FIRST: the stack has just arrived with the sync and does not know its item yet - the trap
+            // OnTesselation guards against. Main thread here, so resolving is safe.
             inv.ResolveBlocksOrItems();
             if (!inv.SlotsByslotId.TryGetValue(slotId, out ItemSlot slot) || slot == null || slot.Empty
                 || slot.Itemstack.Collectible?.Code == null) return;
@@ -5069,6 +4900,7 @@ namespace UniversalDisplayLib
             int h = (int)(fnv % 61u);
             if (!FloatingItemRenderer.TryStart(capi, this, slotId, slot.Itemstack, mesh, matrix, ms, 3f + h / 10f)) return;
             _floatingSlots[slotId] = 0;
+            NoteLeftOutChanged();
             capi.World.BlockAccessor.MarkBlockDirty(Pos);
         }
 
@@ -5076,6 +4908,7 @@ namespace UniversalDisplayLib
         internal void EndFloat(string slotId)
         {
             if (!_floatingSlots.TryRemove(slotId, out _)) return;
+            NoteLeftOutChanged();
             if (!_removed && capi != null) capi.World.BlockAccessor.MarkBlockDirty(Pos);
         }
 
@@ -5104,10 +4937,10 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Server: open one shut pane by itself with a creak and slam it shut <paramref name="openMs"/> later. The same room
-        /// rules as a click (full swing, else the 90 fallback, else not at all). False if this window cannot.
+        /// Server: open one shut pane by itself with a creak and slam it shut <paramref name="openMs"/> later. The same
+        /// room rules as a click (full swing, else the 90 fallback, else not at all). False if this window cannot.
         /// </summary>
-        /// <summary>Synced: a pane rattling (Calm: "have the windows rapidly open and close for a bit") - both ways fast, no ordinary sound.</summary>
+        /// <summary>Synced: a pane rattling - both ways fast, no ordinary sound.</summary>
         bool _rattle;
 
         /// <summary>
@@ -5116,7 +4949,7 @@ namespace UniversalDisplayLib
         /// </summary>
         public bool HauntRattle(Random rnd, int flaps)
         {
-            if (_haunted || _removed || Api?.Side != EnumAppSide.Server || !CanOpen) return false;
+            if (_latched || _haunted || _removed || Api?.Side != EnumAppSide.Server || !CanOpen) return false;
             FrameBoxGroup[] groups = SurfaceBehavior?.FrameBoxGroups;
             if (groups == null) return false;
             if (paneStates.Length < groups.Length) ClampPaneStatesToBlock();
@@ -5164,7 +4997,7 @@ namespace UniversalDisplayLib
 
         public bool Haunt(Random rnd, int openMs)
         {
-            if (_haunted || _removed || Api?.Side != EnumAppSide.Server || !CanOpen) return false;
+            if (_latched || _haunted || _removed || Api?.Side != EnumAppSide.Server || !CanOpen) return false;
             FrameBoxGroup[] groups = SurfaceBehavior?.FrameBoxGroups;
             if (groups == null) return false;
             if (paneStates.Length < groups.Length) ClampPaneStatesToBlock();
@@ -5187,11 +5020,11 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// The slam - see PlaySlam: the thud's body (Calm: "Lets try the thud") with a short snap on top ("if we can make it
-        /// snap then that might be good") - the barrel lid's knock, picked by ear from SnapCandidates. The candidates are what "/udhaunt slam 1-6" and "/udhaunt snap 1-5" play.
+        /// The slam - see PlaySlam: the thud's body with a short snap on top - the barrel lid's knock, picked by ear
+        /// from SnapCandidates. The candidates are what "/udhaunt slam 1-6" and "/udhaunt snap 1-5" play.
         /// </summary>
-        // Calm, after trying them: "just the barrel close but louder and sharper" - the barrel lid's knock twice a little
-        // high (the copies add up: louder; higher: sharper), and once higher again for the front edge
+        // The barrel lid's knock twice a little high (the copies add up: louder; higher: sharper), and once higher
+        // again for the front edge
         public const string SlamSound = "game:sounds/block/barrelclose";
         public const float SlamBodyPitch = 1.1f;
         /// <summary>The chosen snap (a property, not a field: a field set from SnapCandidates above its declaration would run first and crash).</summary>
@@ -5208,15 +5041,13 @@ namespace UniversalDisplayLib
         };
 
         /// <summary>
-        /// Server: the slam, "deeper, louder and sharper" (Calm): the body twice at 70% pitch (deeper, and the two copies add
-        /// up), and the snap on top at its own pitch for the sharp front.
+        /// Server: the slam: the body twice at 70% pitch (deeper, and the two copies add up), and the snap on top at
+        /// its own pitch for the sharp front.
         /// </summary>
-        /// <remarks>
-        /// LOUDER = MORE COPIES (Calm: "need a louder slam ... make people jump"): one sound cannot go past full volume, so
-        /// the copies are stacked at the same instant - each doubling is about 6 dB. <paramref name="bodyCopies"/> /
-        /// <paramref name="snapCopies"/>: 4 and 2 for the real slam; the /udhaunt slam test keeps 2 and 1. Heard further
-        /// (48 blocks) so it stays loud a few blocks off.
-        /// </remarks>
+        /// <remarks> LOUDER = MORE COPIES: one sound cannot go past full volume, so the copies are stacked at the same
+        /// instant - each doubling is about 6 dB. <paramref name="bodyCopies"/> /
+        /// <paramref name="snapCopies"/>: 4 and 2 for the real slam; the /udhaunt slam test keeps 2 and 1. Heard
+        /// further (48 blocks) so it stays loud a few blocks off. </remarks>
         public static void PlaySlam(IWorldAccessor world, double x, double y, double z, string body, (string sound, float pitch) snap,
                                     float bodyPitch = 0.7f, int bodyCopies = 2, int snapCopies = 1)
         {
@@ -5246,12 +5077,11 @@ namespace UniversalDisplayLib
             RegisterDelayedCallback(_ => _slamFast = false, 1500);
             // the snap's swoosh is each client's (PlaySnapSwoosh), so it can be cut off as the pane lands
             double x = Pos.X + 0.5, y = Pos.Y + 0.5, z = Pos.Z + 0.5;
-            // the slam, landing as the fast close ends: the wood chop (Calm's pick, "the slam sound would be the chop3") - "something
-            // louder than the chop": two copies at once (already at full volume) over the large chest lid's wooden bang
+            // the slam, landing as the fast close ends: the wood chop: two copies at once (already at full volume) over
+            // the large chest lid's wooden bang
             int landMs = (int)Math.Clamp(AnimSeconds(CloseAnimFor(pane), SlamSpeedFactor) * 1000f, 0f, 1000f);
-            // "deeper, louder and sharper", with the wood tool hit (Calm: "Lets try wood-tool"): twice at 70% pitch (deeper,
-            // and the two copies add up), once pitched UP for the crack at the front (the chest lid's bang under it went -
-            // Calm: "remove the squeak when closing")
+            // with the wood tool hit: twice at 70% pitch (deeper, and the two copies add up), once pitched UP for the
+            // crack at the front
             RegisterDelayedCallback(_ => PlaySlam(Api.World, x, y, z, SlamSound, SlamSnap, SlamBodyPitch, 4, 2), landMs);
             // a player shut another pane while this one was haunted open: the variant followed this one - put it right
             if (Block?.Variant["state"] == "open" && !IsAnySealingPaneOpen) SyncStateVariant();
@@ -5277,17 +5107,16 @@ namespace UniversalDisplayLib
         ILoadedSound _creak;
         int _creakPane = -1;
         const float SqueakLeadInSeconds = 0.2f;
-        const int SqueakGraceMs = 60;   // "till it fully opens" - stops right as it is open
+        const int SqueakGraceMs = 60;   // stops right as it is open
 
         /// <summary>
-        /// Client: a long creak while a haunted pane opens (Calm, after trying the squeak), cut off the moment it is open - or when it shuts
-        /// (Calm, 2026-10-12: "the squeak noise when opening is better"; the long creaks are the separate random creaks now,
-        /// HalloweenWindows).
+        /// Client: a long creak while a haunted pane opens, cut off the moment it is open - or when it shuts (the long
+        /// creaks are the separate random creaks now, HalloweenWindows).
         /// </summary>
         void PlayHauntCreak(int pane)
         {
             if (capi == null || Pos == null) return;
-            // the long creaks (2.6-4.8 s, longer than any opening) - Calm: "we should have the long creak when it opens"
+            // the long creaks (2.6-4.8 s, longer than any opening)
             string[] creaks = { "woodcreak_long1", "woodcreak_long2", "woodcreak_long3" };
             ILoadedSound sound = capi.World.LoadSound(new SoundParams
             {
@@ -5315,9 +5144,8 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Client: the snap (Calm: "need some noise for when the window snaps shut") - a swoosh as the haunted pane starts to
-        /// slam, cut off the moment it lands so the slam is heard clean (Calm: "the close noise is too long and plays over the
-        /// wood tool noise" - the swoosh runs 0.9 s, the fast close a fraction of that).
+        /// Client: the snap - a swoosh as the haunted pane starts to slam, cut off the moment it lands so the slam is
+        /// heard clean.
         /// </summary>
         void PlaySnapSwoosh(int pane)
         {
@@ -5335,8 +5163,8 @@ namespace UniversalDisplayLib
             sound.Start();
             float speed = (UniversalDisplayLibConfig.Current?.AnimationSpeedValue ?? 1f) * SlamSpeedFactor;
             int landMs = (int)Math.Clamp(AnimSeconds(CloseAnimFor(pane), speed) * 1000f, 60f, 1000f);
-            // released by hand once faded: a sound stopped early is not one that "finished", so DisposeOnFinish may never
-            // free it - one left per slam would pile up over a session (Calm: "will it overload the sound like my old mod?")
+            // released by hand once faded: a sound stopped early is not one that "finished", so DisposeOnFinish may
+            // never free it - one left per slam would pile up over a session
             capi.Event.RegisterCallback(_ =>
             {
                 if (sound.IsDisposed) return;
@@ -5369,13 +5197,13 @@ namespace UniversalDisplayLib
         static readonly ConcurrentDictionary<string, int> AnimFrames = new();
 
         /// <summary>
-        /// Server: a long creak from this window without it moving (Calm: "add in the occasional random creak"). False if it
-        /// cannot open at all - a creak from a solid wall would give the game away.
+        /// Server: a long creak from this window without it moving. False if it cannot open at all - a creak from a
+        /// solid wall would give the game away.
         /// </summary>
         public bool HauntCreak(Random rnd)
         {
             if (_removed || Api?.Side != EnumAppSide.Server || !CanOpen) return false;
-            // mostly the long creaks, now and then a short one (Calm: "add in an occasional short creak")
+            // mostly the long creaks, now and then a short one
             string[] creaks = rnd.Next(10) < 4
                 ? new[] { "woodcreak_1", "woodcreak_2", "woodcreak_3", "woodcreak_4" }
                 : new[] { "woodcreak_long1", "woodcreak_long2", "woodcreak_long3" };
@@ -5394,7 +5222,7 @@ namespace UniversalDisplayLib
             RaisePaneChanged(this, index, open);
         }
 
-        // -- More for modders (2026-10-13, Calm: "do all of them") --
+        // -- More for modders --
 
         /// <summary>
         /// For code mods: a pane opened (true) or shut (false) - (block entity, pane index, open). Raised on the SERVER when
@@ -5417,6 +5245,7 @@ namespace UniversalDisplayLib
         /// <summary>Client: the open/close sound for what just moved - a pane's own openSound / closeSound, else the block's.</summary>
         void PlayOpenCloseSound(bool[] before)
         {
+            PlayCloseThud(before);
             FrameBoxGroup[] groups = SurfaceBehavior?.FrameBoxGroups ?? Array.Empty<FrameBoxGroup>();
             for (int i = 0; i < paneStates.Length && i < groups.Length; i++)
             {
@@ -5514,19 +5343,18 @@ namespace UniversalDisplayLib
                 if (ba.GetBlock(at, BlockLayersAccess.Fluid).Id != 0) return false;
                 Block solid = ba.GetBlock(at, BlockLayersAccess.Solid);
                 if (solid.Id == 0 || solid.Replaceable >= 6000) continue;
-                // Something is there: room if the pane misses what it takes up (Calm, 2026-10-07: a classic window opens
-                // into the block of an OPEN External Shutter - its leaves folded away, only its thin frame left)
+                // Something is there: room if the pane misses what it takes up
                 foreach (Cuboidf taken in OccupiedIn(ba, at, solid, Pos)) if (Overlaps(piece, taken)) return false;
             }
             return true;
         }
 
         /// <summary>
-        /// How far two parts may meet before one is in the other's way: more than this on every axis (1/64 block, a quarter
-        /// voxel). An open External Shutter's frame and a classic window's leaf touch by ~0.01 voxel (the 1-high WIDE leaf,
-        /// sitting 0.1 voxel off in its model, by 0.13 mid-swing) and pass; a shutter folding into the shutter beside it
-        /// overlaps its frame by half a voxel and still falls back to 90 degrees. Checked on every classic window against
-        /// the 1/2/3-high shutters in each leaf state, 2026-10-07.
+        /// How far two parts may meet before one is in the other's way: more than this on every axis (1/64 block, a
+        /// quarter voxel). An open External Shutter's frame and a classic window's leaf touch by ~0.01 voxel (the
+        /// 1-high WIDE leaf, sitting 0.1 voxel off in its model, by 0.13 mid-swing) and pass; a shutter folding into
+        /// the shutter beside it overlaps its frame by half a voxel and still falls back to 90 degrees. Checked on
+        /// every classic window against the 1/2/3-high shutters in each leaf state.
         /// </summary>
         const float RoomOverlap = 1 / 64f;
 
@@ -5543,9 +5371,8 @@ namespace UniversalDisplayLib
             (ba.GetBlockEntity(at) is BEUniversalDisplay there ? there.CollisionExcept(asker) : block.GetSelectionBoxes(ba, at)) ?? Array.Empty<Cuboidf>();
 
         /// <summary>
-        /// Server, before a pane SHUTS: is another window's open part where this pane shuts? (the 2026-10-03 rule - a
-        /// shutter cannot close while the window behind it is open into its block - rebuilt on the measured boxes.)
-        /// A leaf that opened into an occupied block has no filler there, but its owner still knows its piece of that block.
+        /// Server, before a pane SHUTS: is another window's open part where this pane shuts? A leaf that opened into an
+        /// occupied block has no filler there, but its owner still knows its piece of that block.
         /// </summary>
         bool OpenNeighbourInTheWay(int pane)
         {
@@ -5574,8 +5401,8 @@ namespace UniversalDisplayLib
                     foreach (BlockEntity cand in candidates)
                     {
                         if (cand is not BEUniversalDisplay other || other.Pos.Equals(Pos) || !asked.Add(other.Pos)) continue;
-                        // its boxes there, AND where its open panes really are - a pane whose box stays shut (the edge awning)
-                        // has no box in this block but its glass is here all the same (Calm, 2026-10-07)
+                        // its boxes there, AND where its open panes really are - a pane whose box stays shut (the edge
+                        // awning) has no box in this block but its glass is here all the same
                         foreach (Cuboidf part in other.AutoCollisionAt(at).Concat(other.OpenPartsIn(at))) if (Overlaps(piece, part)) return true;
                     }
                 }

@@ -20,13 +20,14 @@ namespace UniversalDisplayLib
     }
 
     /// <summary>
-    /// MEASURED FOOTPRINTS (Calm, 2026-10-07: "Add it in now so I can see if it works") - an item's size for FITTING and
-    /// STACKING is taken from what is drawn, so a patch no longer needs to write one.
+    /// MEASURED FOOTPRINTS - an item's size for FITTING and STACKING is taken from what is drawn, so a patch no longer
+    /// needs to write one.
     ///
-    /// The client measures the item's mesh with its display transform applied (the exact mesh it draws on that category):
-    /// width and length are its extent across, height is how high its top sits above the surface - the stack pitch. The
-    /// server never draws items, so each client sends what it measured, once per item and category; the server keeps the
-    /// first it is sent. Until the server has one, it uses the written size (or the default), as before.
+    /// The client measures the item's mesh with its display transform applied (the exact mesh it draws on that
+    /// category): width and length are its extent across, height is how high its top sits above the surface - the stack
+    /// pitch. The server never draws items, so each client sends what it measured, once per item and category; the
+    /// server keeps the first it is sent. Until the server has one, it uses the written size (or the default), as
+    /// before.
     ///
     /// Not measured - the written size stays:
     ///   * an entry with "outline": "size" (crossed-plane plants, whose model is a whole block of see-through sheet),
@@ -34,11 +35,10 @@ namespace UniversalDisplayLib
     ///   * a size being tuned in .udedit (that override is applied after this).
     /// An item still needs a displayable entry to be placeable at all; only the size can be left out of it.
     ///
-    /// STAND-IN SIZES (2026-10-09, antlered figurines that "forget the box"): an item that builds its own mesh
-    /// (IContainedMeshSource) can return null while that mesh is not ready, and the display draws the item's ordinary
-    /// model meanwhile. A size measured from that is kept as a STAND-IN: used until the real mesh is measured, which then
-    /// replaces it on both sides, once. A real size is never replaced, and an item whose own mesh never comes keeps the
-    /// stand-in, which is then simply what it looks like.
+    /// STAND-IN SIZES: an item that builds its own mesh (IContainedMeshSource) can return null while that mesh is not
+    /// ready, and the display draws the item's ordinary model meanwhile. A size measured from that is kept as a
+    /// STAND-IN: used until the real mesh is measured, which then replaces it on both sides, once. A real size is never
+    /// replaced, and an item whose own mesh never comes keeps the stand-in, which is then simply what it looks like.
     /// </summary>
     public static class MeasuredItemSizes
     {
@@ -52,6 +52,7 @@ namespace UniversalDisplayLib
             sizes.Clear();
             sent.Clear();
             standIns.Clear();
+            lock (storeLock) budgets.Clear();
         }
 
         static string KeyOf(ItemSlot slot, string category)
@@ -119,21 +120,26 @@ namespace UniversalDisplayLib
         {
             if (packet?.Key == null || packet.Key.Length > 400) return;
             if (!Sane(packet.Width) || !Sane(packet.Height) || !Sane(packet.Length)) return;
-            // A key a client sends must name an item this server actually has, and there is a ceiling on how many
-            // are kept (2026-10-22): otherwise a buggy or hostile client could fill the server's memory with made-up
-            // keys, each one making every loaded display rebuild its boxes.
+            // A key a client sends must name an item this server actually has, and there is a ceiling on how many are
+            // kept: otherwise a buggy or hostile client could fill the server's memory with made-up keys, each one
+            // making every loaded display rebuild its boxes.
             if (sizes.Count >= MaxServerSizes && !sizes.ContainsKey(packet.Key)) return;
             if (!NamesRealItem(player?.Entity?.World, packet.Key)) return;
+            // a size already settled changes nothing, so it costs the player nothing either
+            if (sizes.ContainsKey(packet.Key) && !standIns.ContainsKey(packet.Key)) return;
+            if (!MayReport(player?.PlayerUID)) return;
             if (Store(packet.Key, new Size3f(packet.Width, packet.Height, packet.Length), packet.StandIn))
             {
+                CountReport(player?.PlayerUID);
                 BlockBehaviorDisplaySurfaces.BumpGeneration();
                 BEUniversalDisplay.ItemSizesChanged();   // a taller stack may now reach the space above (fillers)
             }
         }
 
         /// <summary>
-        /// Both sides: keep a size. A stand-in only fills an empty key; a real size fills one or replaces a stand-in. ONE LOCKED
-        /// STEP (2026-10-10): the size and its stand-in mark were two writes, so a real size arriving between them was lost.
+        /// Both sides: keep a size. A stand-in only fills an empty key; a real size fills one or replaces a stand-in.
+        /// ONE LOCKED STEP: the size and its stand-in mark were two writes, so a real size arriving between them was
+        /// lost.
         /// </summary>
         static bool Store(string key, Size3f size, bool standIn)
         {
@@ -159,12 +165,45 @@ namespace UniversalDisplayLib
         /// <summary>The most item sizes the server keeps from clients - far more than any modpack's displayable items.</summary>
         const int MaxServerSizes = 20000;
 
-        /// <summary>Whether a key (KeyOf: the item code first, then "|...") starts with the code of a real item or block.</summary>
+        /// <summary>The most new sizes one player may add in a session - a client only ever reports what it has drawn.</summary>
+        const int MaxSizesPerPlayer = 5000;
+
+        /// <summary>New reports a player may send at once (joining a world full of displays), and how fast that refills.</summary>
+        const float ReportBurst = 1000f, ReportsPerSecond = 50f;
+
+        sealed class ReportBudget { public float Tokens = ReportBurst; public long LastMs = Environment.TickCount64; public int Added; }
+
+        static readonly System.Collections.Generic.Dictionary<string, ReportBudget> budgets = new();
+
+        /// <summary>Whether this player may send one more new size: every report makes the server look at its displays again.</summary>
+        static bool MayReport(string playerUid)
+        {
+            if (playerUid == null) return false;
+            lock (storeLock)
+            {
+                if (!budgets.TryGetValue(playerUid, out ReportBudget budget)) budgets[playerUid] = budget = new ReportBudget();
+                if (budget.Added >= MaxSizesPerPlayer) return false;
+                long now = Environment.TickCount64;
+                budget.Tokens = Math.Min(ReportBurst, budget.Tokens + (now - budget.LastMs) / 1000f * ReportsPerSecond);
+                budget.LastMs = now;
+                if (budget.Tokens < 1f) return false;
+                budget.Tokens -= 1f;
+                return true;
+            }
+        }
+
+        static void CountReport(string playerUid)
+        {
+            lock (storeLock)
+                if (playerUid != null && budgets.TryGetValue(playerUid, out ReportBudget budget)) budget.Added++;
+        }
+
+        /// <summary>Whether a key (KeyOf: "code|type|category", with a look before the category on some items) names a real item or block.</summary>
         static bool NamesRealItem(IWorldAccessor world, string key)
         {
             if (world == null) return false;
             int bar = key.IndexOf('|');
-            if (bar <= 0) return false;
+            if (bar <= 0 || key.IndexOf('|', bar + 1) < 0 || key.EndsWith("|", StringComparison.Ordinal)) return false;
             var code = new AssetLocation(key.Substring(0, bar));
             return world.GetItem(code) != null || world.GetBlock(code) != null;
         }

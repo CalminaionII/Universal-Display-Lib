@@ -7,11 +7,11 @@ using Vintagestory.API.Common;
 namespace UniversalDisplayLib.OptionalDisplays;
 
 /// <summary>
-/// Applies a group of Harmony hooks all together or not at all (lib 1.3.1). The companions hook the game's chisel,
-/// ground-storage and lighting code, and a game update can rename or change any of those methods. A hook that
-/// cannot be applied used to throw out of a ModSystem's Start and stop the game loading; now every target is found
-/// before anything is patched, a group that fails half way takes back what it had applied, and the result is one
-/// warning in the log naming what stops working. Callers decide what to switch off when a group is missing.
+/// Applies a group of Harmony hooks all together or not at all. The companions hook the game's chisel, ground-storage
+/// and lighting code, and a game update can rename or change any of those methods. A hook that cannot be applied would
+/// throw out of a ModSystem's Start and stop the game loading, so every target is found before anything is patched, a
+/// group that fails half way takes back what it had applied, and the result is one warning in the log naming what stops
+/// working. Callers decide what to switch off when a group is missing.
 /// </summary>
 internal static class SafePatch
 {

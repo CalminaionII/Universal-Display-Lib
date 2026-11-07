@@ -147,6 +147,9 @@ Everything not listed here is an ordinary block setting and works as it does on 
 | `showSurfacesWhenStacked` | When your block stands on another Universal Display block, its surfaces close, because they are usually obstructed. List the surface numbers that should stay usable: `[ 0 ]`. Left out: all of them close. |
 | `noPlacementJitter` | True: items on this block sit square, without the small random turn. Players can also switch the turn off for everything, and an item can opt out with `randYRotAngle: 0`. |
 | `lockChiselledSurfaces` | Surface numbers. The FIRST chiselled block put on one of these surfaces stays fixed - it cannot be taken, turned or nudged, and drops only when the whole block is broken. Anything put on that surface afterwards stays takeable. For designs where a chiselled piece is part of the structure. |
+| **Weather - all optional (1.5.0 and later)** |  |
+| `allowSnowCover` | True: the block takes the game's own snow layer on top. Display blocks refuse it by default, because it sat on top of shutters like a ledge. |
+| `boardSnow` | True: a block with no glass in its shape takes snow on its boards even though nothing on it opens - the plank Vanilla Style Pane does this. A glassless block that opens, like a shutter, gets it without asking. |
 | **Swapping and drops - all optional** |  |
 | `wrenchSwapTo` | Sprint + right-click with a wrench turns the block into this one, in place, keeping its facing - only while it is empty and every pane is shut. `{state}` (or any of your variant groups) is filled from the current block. **Write the domain** - `yourmod:...` - or it looks for the block in `game:`. For a ring of more than two, point each block at the next one. A list is a fallback list (the first that exists is used), not a cycle. |
 | `dropsAs` | What the block drops when broken - for a block that should only ever drop its closed or plain version. Domain included, as for `wrenchSwapTo`; `{state}` works here too. |
@@ -167,6 +170,7 @@ Each entry in `frameBoxGroups`:
 | `openState` / `closedState` | The block info's words for this pane's state instead of "Open" / "Closed" (1.2.2 and later). |
 | `boxStaysShut` | True: the pane keeps its shut box while it is open, so it swings out with nothing to bump into or click - the awning and hopper do this. Room to open is still checked along the real swing. |
 | `sealsRoom` | True by default: the shut pane seals the room, and opening it swaps the block to `open`. False for a part that is not a gap in the wall - a drawer, an interior door, a shutter over a solid panel. It then uses the `toggleSolid` sound and never swaps the block. |
+| `windBlown` | True or false: whether this pane rocks in the wind, whatever its model does. Left out, the lib decides: a pane that seals the room and swings more than 2 voxels out of the wall on its way open counts; a sash, a slider or a pane with `sealsRoom` false does not (1.5.0 and later). |
 
 ### Display Surfaces
 
@@ -188,6 +192,21 @@ A surface is one cube in the block's shape, and its name is the configuration:
 - **The category keeps your data separate.** A surface ending `-box` reads `displayable.box` off the item, so the same item can sit one way on your block and another way on a window or a vanilla shelf, without any of them overwriting each other.
 
 - **Items nobody patched still work.** With no entry for your category, the lib falls back to the item's `displayable.shelf`, then `shelvable`, then a plant's potted form - most of the game can go on your block before you write a single patch.
+
+### Levitating Displays
+
+Any display block with `"udlLevitatingDisplay": true` in its attributes makes the one item directly on top of it hover, turning and bobbing (1.5.0 and later). Placed as a block, the one item on its own surface floats, centred. Stood on another display's surface, the item stacked on it floats. Nothing stacks on a floating item, and players can tune each one with Sneak + right-click and an empty hand.
+
+All of these block attributes are optional:
+
+| `levitateRiseVoxels` | How high the item rests above the base. Default 2.5, from 0 to 16. |
+|---|---|
+| `levitateBobVoxels` | How far it bobs. Default 0.5, from 0 to 8. |
+| `levitateBobSeconds` | How long one bob takes. Default 2. |
+| `levitateTurnSeconds` | How long one full turn takes. Default 9; negative turns the other way, 0 = it does not turn. |
+| `levitateEaseSeconds` | How long it takes to ease up when placed. Default 1. |
+| `levitateTiltDeg` / `levitateTiltForwardDeg` | Lean side to side, and back and forward. Default 0, from -90 to 90. |
+| `levitatePlaceHelp` / `levitateTakeHelp` | Lang keys for the interaction help. Default the game's ground storage lines. |
 
 ### Boxes From The Model
 
@@ -349,6 +368,8 @@ BEUniversalDisplay.PaneChanged += (be, pane, open) => { /* be.Pos, pane number, 
 ```
 
 A mistake in your listener is logged and does not stop the block. Unsubscribe in your mod system's `Dispose`, since the event is static.
+
+An item that implements the game's `IContainedInteractable` is asked first when it is clicked on a display, and its `GetContainedInteractionHelp` lines show in the block's help. Desk Picture Frame Plus uses this to choose a frame's picture while it sits on a shelf (1.5.0 and later).
 
 ### Shipping It With Your Mod
 

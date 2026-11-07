@@ -13,31 +13,30 @@ using Vintagestory.GameContent;
 namespace UniversalDisplayLib
 {
     /// <summary>
-    /// ITEMS WHOSE LOOK CHANGES WITH THE STACK, SHOWN AS THEY ARE (Calm, 2026-10-09: modular backpacks with pouches -
-    /// "make it generic so things do that in general ... just like we did with the antlers").
+    /// ITEMS WHOSE LOOK CHANGES WITH THE STACK, SHOWN AS THEY ARE.
     ///
     /// A display only gets an item's look from a displayable shape, an IContainedMeshSource, or the item's plain model.
     /// Gear mods that change what an item looks like (Modular Backpacks adds pouches) often do it only in the hand (a
     /// swapped GPU model the lib cannot read back) and on the wearer - through the game's IWearableShapeSupplier, which
-    /// hands out the worn shape for that very stack. This builds the display mesh from that worn shape, the way the game
-    /// puts gear on an entity (EntityBehaviorContainer.addGearToShape, public vsessentialsmod), with the wearer's own body
-    /// left out.
+    /// hands out the worn shape for that very stack. This builds the display mesh from that worn shape, the way the
+    /// game puts gear on an entity (EntityBehaviorContainer.addGearToShape, public vsessentialsmod), with the wearer's
+    /// own body left out.
     ///
-    /// Only for an item that IS an IWearableShapeSupplier, can be attached to an entity, and has NO IContainedMeshSource
-    /// (vanilla clothes have one - their folded shelf model - so they never come here) and no displayable shape of its
-    /// own (folded clothes in the patches keep theirs; BEUniversalDisplay checks that first).
+    /// Only for an item that IS an IWearableShapeSupplier, can be attached to an entity, and has NO
+    /// IContainedMeshSource (vanilla clothes have one - their folded shelf model - so they never come here) and no
+    /// displayable shape of its own (folded clothes in the patches keep theirs; BEUniversalDisplay checks that first).
     ///
-    /// The worn shape sits where it is worn, so the mesh is moved to where the item's plain model sits (bottom centre of
-    /// its box); the item's display transform then applies as before. It turns the way it is worn - a wrong facing is a
-    /// per-item patch (rendering fix: patches first).
+    /// The worn shape sits where it is worn, so the mesh is moved to where the item's plain model sits (bottom centre
+    /// of its box); the item's display transform then applies as before. It turns the way it is worn - a wrong facing
+    /// is a per-item patch (rendering fix: patches first).
     ///
-    /// ASKED FOR THE LOCAL PLAYER (2026-10-09, first try showed a plain bag): Modular Backpacks only composes its addons when
-    /// the wearer is an EntityPlayer - for no wearer it returns null and the game falls back to the plain attached shape. The
-    /// worn shape is what a player would wear, so the local player's entity is passed; nothing on it is changed.
+    /// ASKED FOR THE LOCAL PLAYER: Modular Backpacks only composes its addons when the wearer is an EntityPlayer - for
+    /// no wearer it returns null and the game falls back to the plain attached shape. The worn shape is what a player
+    /// would wear, so the local player's entity is passed; nothing on it is changed.
     ///
-    /// Built on the MAIN thread (it inserts textures into the block atlas). Until it is ready the plain model stands in -
-    /// MeasuredItemSizes keeps that size only until the real one is measured - and the key ends "|wait" so the real mesh
-    /// is asked for once it exists (the figurines' way).
+    /// Built on the MAIN thread (it inserts textures into the block atlas). Until it is ready the plain model stands in
+    /// - MeasuredItemSizes keeps that size only until the real one is measured - and the key ends "|wait" so the real
+    /// mesh is asked for once it exists (the figurines' way).
     /// </summary>
     public static class WornShapeMesh
     {

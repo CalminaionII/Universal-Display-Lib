@@ -57,17 +57,11 @@ namespace UniversalDisplayLib
         public static readonly Size3f DefaultItemSize = new Size3f(6f, 4f, 6f);
 
         /// <summary>
-        /// Footprint for a plant displayed in its potted form, matched to vanilla's own
-        /// flowerpot. Measured rather than copied: <c>empty.json</c> spans Y 0..7 and X 5..11.
+        /// Footprint for a plant displayed in its potted form, matched to vanilla's own flowerpot. Measured rather than
+        /// copied: <c>empty.json</c> spans Y 0..7 and X 5..11.
         ///
-        /// **THE HEIGHT IS NO LONGER WHAT POSITIONS THE PLANT.** It used to be: a stacked
-        /// item sat at <c>level x the height of the item being PLACED</c>, so 7 only landed a
-        /// plant on the rim of a pot that was also 7. Fixed 2026-08-05 — <c>StackBaseY</c>
-        /// now sums the heights of the items actually BELOW, so a plant meets the rim of a pot
-        /// of any height and this number no longer has to match anything.
-        ///
-        /// What 7 still governs is the plant's own footprint, and how far it would lift
-        /// anything stacked on top of IT.
+        /// The height does not position the plant (<c>StackBaseY</c> sums the heights of the items actually below). It
+        /// governs the plant's own footprint and how far it lifts anything stacked on top of it.
         /// </summary>
         public static readonly Size3f PottedItemSize = new Size3f(6f, 7f, 6f);
 
@@ -94,11 +88,8 @@ namespace UniversalDisplayLib
             base.OnLoaded(api);
             capi = api as ICoreClientAPI;
 
-            // NO event bus registration here. It used to register OnGetTransform per block
-            // TYPE, which is bounded and so far less harmful than the per-block-entity case
-            // — but event bus listeners cannot be unregistered at all in this API, so it
-            // still accumulated across world loads within one client session. The mod
-            // system registers once instead; see UniversalDisplayLibMod.StartClientSide.
+            // No event bus registration here: listeners cannot be unregistered in this API, so the mod system registers
+            // once (UniversalDisplayLibMod.StartClientSide).
 
             FrameBoxGroups = block.Attributes?["frameBoxGroups"].AsObject<FrameBoxGroup[]>() ?? Array.Empty<FrameBoxGroup>();
             CollisionBoxGroups = block.Attributes?["collisionBoxGroups"].AsObject<CollisionBoxGroup[]>() ?? Array.Empty<CollisionBoxGroup>();
@@ -107,10 +98,9 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// What <see cref="ParseSurfaces"/> last built THIS block type's grid with, so a change can be
-        /// detected and a no-op rebuild skipped. Per block type, not static (2026-10-22): in singleplayer the
-        /// client and the server each have their own blocks but shared one static, so whichever side rebuilt
-        /// first made the other skip its rebuild and keep the old grid.
+        /// What <see cref="ParseSurfaces"/> last built THIS block type's grid with, so a change can be detected and a
+        /// no-op rebuild skipped. Per block type, not static: in singleplayer the client and the server each have their
+        /// own blocks, and with one static whichever side rebuilt first would make the other skip its rebuild.
         /// </summary>
         private bool builtPrecise = true;
 
@@ -133,15 +123,13 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Rebuild every display block's placement grid, for when PrecisePlacement changes.
         ///
-        /// WHY A REBUILD AND NOT A RESTART. The grid is built once per block type at load,
-        /// so the value arriving from the server later cannot be applied by reading it - the
-        /// boxes already exist. Calm's call, 2026-09-10: do the rebuild, and leave the cost
-        /// to the server owner, since they are the only one who can change the setting that
-        /// triggers it.
+        /// WHY A REBUILD AND NOT A RESTART. The grid is built once per block type at load, so the value arriving from
+        /// the server later cannot be applied by reading it - the boxes already exist. So do the rebuild, and leave the
+        /// cost to the server owner, since they are the only one who can change the setting that triggers it.
         ///
-        /// Returns how many block types were rebuilt, or -1 when nothing needed doing.
-        /// Skipping the no-op matters: this walks every block in the game and re-reads a
-        /// shape for each display block, which is not something to do on a whim.
+        /// Returns how many block types were rebuilt, or -1 when nothing needed doing. Skipping the no-op matters: this
+        /// walks every block in the game and re-reads a shape for each display block, which is not something to do on a
+        /// whim.
         /// </summary>
         public static int RebuildAll(ICoreAPI api)
         {
@@ -354,26 +342,26 @@ namespace UniversalDisplayLib
         // ── Item sizing ─────────────────────────────────────────────────────
 
         /// <summary>
-        /// Resolves the placement footprint / transform for a held or stored item.
-        /// Same resolution order as vanilla so items authored for cabinets and
-        /// shelves work unchanged.
+        /// Resolves the placement footprint / transform for a held or stored item. Same resolution order as vanilla so
+        /// items authored for cabinets and shelves work unchanged.
         /// </summary>
         /// <summary>
         /// Resolves an item's display properties and GUARANTEES a usable Size.
         ///
-        /// **A null Size crashes the client from the render thread**, in
-        /// <see cref="GetCentreOffset"/> via RegenSelectionBoxes, and it is reachable from
-        /// ordinary JSON: any <c>displayable.&lt;category&gt;</c> entry that omits <c>size</c>
-        /// deserialises with Size null. The in-game transform editor produces exactly that —
-        /// it writes a <c>transform</c> into an entry that did not exist, so tuning an item
-        /// with no display data of its own leaves a transform and nothing else behind.
-        ///
-        /// Found 2026-08-02 by doing precisely that to a flower. Filling the default in here
-        /// rather than guarding each caller means no future reader can hit it either.
+        /// **A null Size crashes the client from the render thread**, in <see cref="GetCentreOffset"/> via
+        /// RegenSelectionBoxes, and it is reachable from ordinary JSON: any <c>displayable.&lt;category&gt;</c> entry
+        /// that omits <c>size</c> deserialises with Size null. The in-game transform editor produces exactly that — it
+        /// writes a <c>transform</c> into an entry that did not exist, so tuning an item with no display data of its
+        /// own leaves a transform and nothing else behind.
         /// </summary>
         public static DisplayableAttributes GetDisplayableAttributes(ItemSlot slot, string displayType)
         {
-            DisplayableAttributes dattr = ResolveDisplayableAttributes(slot, displayType);
+            // ANY ITEM OR BLOCK GOES ON A DISPLAY. Only for an item with no display data of its own - one that has some
+            // keeps it. Particles, folded clothes and the like are for patches, as before. Ground and chiselled floors
+            // take every item only while display placement is switched on (GroundStorageHook.TakesOver), so building
+            // still works. Containers such as chests can be shown, not opened.
+            DisplayableAttributes dattr = ResolveDisplayableAttributes(slot, displayType)
+                                          ?? AnyItemEntry(slot?.Itemstack?.Collectible);
             if (dattr == null) return null;
 
             // A PLANT'S OWN DEFAULTS FILL ANY GAP BEFORE THE GENERIC ONES DO.
@@ -404,20 +392,18 @@ namespace UniversalDisplayLib
 
             // AUTHORING OVERRIDE — the in-game size editor, client and session only.
             //
-            // Applied LAST so it beats every branch above, and kept OUTSIDE the collectible's
-            // attribute tree deliberately. Writing a `size` into `displayable.<category>`
-            // would leave an entry carrying only that, and resolution is WHOLESALE — so the
-            // item would lose its transform, behaviour and shape the instant it was tuned.
-            // That is exactly the trap the transform editor springs on plants, worked around
-            // a few lines above; there is no reason to build a second one.
+            // Applied LAST so it beats every branch above, and kept OUTSIDE the collectible's attribute tree
+            // deliberately. Writing a `size` into `displayable.<category>` would leave an entry carrying only that, and
+            // resolution is WHOLESALE — so the item would lose its transform, behaviour and shape the instant it was
+            // tuned. That is exactly the trap the transform editor springs on plants, worked around a few lines above;
+            // there is no reason to build a second one.
             //
-            // NOT PERSISTED AND THERE IS NO REVERT. The number is meant to be read off the
-            // printout and typed into a patch file, which is the only place it becomes real.
-            // Reloading the world drops it. Cleared in StartClientSide, because a client
-            // static outlives the world it describes.
-            // MEASURED FOOTPRINT (2026-10-07): the size the item is DRAWN at on this category, once a client has measured it -
-            // fitting and stacking then follow the model and a patch need not write a size. Before the .udedit override below,
-            // so tuning still wins. See MeasuredItemSizes for what is left on the written size.
+            // NOT PERSISTED AND THERE IS NO REVERT. The number is meant to be read off the printout and typed into a
+            // patch file, which is the only place it becomes real. Reloading the world drops it. Cleared in
+            // StartClientSide, because a client static outlives the world it describes. MEASURED FOOTPRINT: the size
+            // the item is DRAWN at on this category, once a client has measured it - fitting and stacking then follow
+            // the model and a patch need not write a size. Before the .udedit override below, so tuning still wins. See
+            // MeasuredItemSizes for what is left on the written size.
             if (MeasuredItemSizes.TryGet(slot, displayType, out Size3f measured))
             {
                 dattr.Size = measured;
@@ -429,8 +415,8 @@ namespace UniversalDisplayLib
                 dattr.Size = tuned;
             }
 
-            // THE PLAYER'S SIZE (lib 1.4.0, the Resize key): last, so every fit and stacking check sees the space the item
-            // really takes. Placed: the size it carries; in hand: its holder's pending size. See ItemScale.
+            // THE PLAYER'S SIZE (the Resize key): last, so every fit and stacking check sees the space the item really
+            // takes. Placed: the size it carries; in hand: its holder's pending size. See ItemScale.
             dattr.Size = ItemScale.Scaled(dattr.Size, ItemScale.For(slot));
 
             return dattr;
@@ -486,11 +472,19 @@ namespace UniversalDisplayLib
         public static readonly Dictionary<(CollectibleObject, string), Size3f> SizeOverrides = new();
 
         /// <summary>
-        /// A working copy of props that belong to somebody else, so the callers downstream can
-        /// fill defaults and apply overrides without writing into another mod's — or vanilla's
-        /// — live data. Only the fields this library reads are carried across; anything else
-        /// would be copied for no one.
+        /// A working copy of props that belong to somebody else, so the callers downstream can fill defaults and apply
+        /// overrides without writing into another mod's — or vanilla's — live data. Only the fields this library reads
+        /// are carried across; anything else would be copied for no one.
         /// </summary>
+        /// <summary>
+        /// VANILLA'S SHELF DATA GIVES ONLY ITS SHAPE. Its transform, size, stacking and resting-angle range were made
+        /// for vanilla's shelf; here an item is drawn at its own size (the Resize key sizes it), measured, and stacks
+        /// freely. A folded garment keeps its folded model. Our own entries (displayable.windowdisplay, from the
+        /// patches) are never put through this.
+        /// </summary>
+        private static DisplayableAttributes ShapeOnly(DisplayableAttributes vanilla)
+            => vanilla == null ? null : new DisplayableAttributes { Shape = vanilla.Shape };
+
         private static DisplayableAttributes CopyOf(DisplayableAttributes src)
         {
             if (src == null) return null;
@@ -506,13 +500,13 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// READ ONCE PER ITEM AND CATEGORY (code check 2026-10-22). An item with no IDisplayableProps answers from its own
-        /// attributes alone, which used to be deserialised on every call - per stored item on every box rebuild, and several
-        /// times a frame while placing. Each caller still gets its own copy (FreshCopyOf), as when every call parsed.
-        /// Items with the interface (clutter's typed props) can answer per stack and are still asked every time.
-        /// Cleared on world start and by the transform editor's writes (ForgetDisplayData). Each entry also remembers the
-        /// attributes object it was read from: an item whose attributes are REPLACED later (another mod, or the regression
-        /// suite) is read again rather than answered from the old ones.
+        /// READ ONCE PER ITEM AND CATEGORY. An item with no IDisplayableProps answers from its own attributes alone,
+        /// and deserialising that on every call would run per stored item on every box rebuild, and several times a
+        /// frame while placing. Each caller still gets its own copy (FreshCopyOf). Items with the interface (clutter's
+        /// typed props) can answer per stack and are still asked every time. Cleared on world start and by the
+        /// transform editor's writes (ForgetDisplayData). Each entry also remembers the attributes object it was read
+        /// from: an item whose attributes are REPLACED later (another mod, or the regression suite) is read again
+        /// rather than answered from the old ones.
         /// </summary>
         static readonly ConcurrentDictionary<(CollectibleObject, string), (JsonObject From, DisplayableAttributes Entry)> attributeEntries = new();
         static readonly ConcurrentDictionary<CollectibleObject, (JsonObject From, PlantContainerProps Props)> pottedProps = new();
@@ -561,99 +555,63 @@ namespace UniversalDisplayLib
                                                                           string displayType, IDisplayableProps props)
         {
 
-            // COPIED, NOT RETURNED AS-IS. What comes back here belongs to whoever implements
-            // the interface — for clutter it is the live entry inside the behaviour's own
-            // PropsByCode map — and everything downstream MUTATES what it is given:
-            // `Size ??= DefaultItemSize`, the plant backfill, and the size override all write
-            // straight onto it. Without the copy, resolving one clutter item stamped our
-            // defaults permanently into vanilla's map for that type, for the rest of the
-            // session and for every block in the world reading it.
-            //
-            // Exactly the fault the cached mesh had a few hours earlier, in a different place:
-            // anything obtained from an interface someone else implements is not ours to write
-            // on unless we copied it first.
+            // COPIED, NOT RETURNED AS-IS. What comes back here belongs to whoever implements the interface — for
+            // clutter it is the live entry inside the behaviour's own PropsByCode map — and everything downstream
+            // MUTATES what it is given: `Size ??= DefaultItemSize`, the plant backfill, and the size override all write
+            // straight onto it. Without the copy, resolving one clutter item would stamp our defaults into vanilla's
+            // map for that type, for the session and for every block in the world reading it.
             DisplayableAttributes fromInterface = CopyOf(props?.GetDisplayableProps(slot, displayType));
 
             if (fromInterface != null)
             {
-                // A TYPE-KEYED ENTRY INHERITS THAT TYPE'S OWN SHELF SIZE when it does not state
-                // one. Clutter keeps its real size under `shelf`, so a patch adding a
-                // `windowdisplay` entry for a transform alone used to answer first, carry no
-                // size, and drop the item to the generic default — it visibly shrank. Vanilla's
-                // number now stands unless the patch deliberately replaces it.
-                //
-                // Size only. `null` unambiguously means "absent", while an omitted `behavior`
-                // is indistinguishable from one explicitly set to Default — so restating
-                // `behavior` stays the author's job, as the cookbook says.
-                if (fromInterface.Size == null && displayType != DefaultDisplayCategory)
-                {
-                    DisplayableAttributes shelf = props.GetDisplayableProps(slot, DefaultDisplayCategory);
-                    fromInterface.Size = shelf?.Size;
-                }
-
                 return fromInterface;
             }
 
             DisplayableAttributes fromAttributes = collectible.Attributes?["displayable"][displayType].AsObject<DisplayableAttributes>();
             if (fromAttributes != null)
             {
-                // AN ENTRY WITH NO SHAPE KEEPS THE SHELF'S (2026-10-10). A patch giving this category only a transform
-                // replaced the game's shelf entry wholesale, so a garment lost its folded model and was drawn as worn.
-                // Shape only, as the typed-props path above keeps only the size: nothing else is ambiguous.
+                // AN ENTRY WITH NO SHAPE KEEPS THE SHELF'S. A patch giving this category only a transform replaces the
+                // game's shelf entry wholesale, and a garment would lose its folded model. Shape only, as the
+                // typed-props path above keeps only the size: nothing else is ambiguous.
                 if (fromAttributes.Shape == null && displayType != DefaultDisplayCategory)
                     fromAttributes.Shape = collectible.Attributes?["displayable"][DefaultDisplayCategory]["shape"]
                         .AsObject<CompositeShape>();
                 return fromAttributes;
             }
 
-            // Same inheritance for the interface path. Clutter declares its sizes through a
-            // TypedDisplayableProps behaviour rather than plain attributes, and that class
-            // does a bare TryGetValue(displayType) with no fallback — so asking for
-            // "windowdisplay" returns null and every piece of clutter was rejected outright.
-            // Its map also lives in behaviour properties, so the attributes fallback below
-            // cannot see it either. Asking the interface again for "shelf" covers all of it,
-            // and any other mod using the same behaviour, without patching ~100 entries.
+            // Same inheritance for the interface path. Clutter declares its sizes through a TypedDisplayableProps
+            // behaviour rather than plain attributes, and that class does a bare TryGetValue(displayType) with no
+            // fallback — so asking for "windowdisplay" returns null and every piece of clutter would be rejected. Its
+            // map also lives in behaviour properties, so the attributes fallback below cannot see it either. Asking the
+            // interface again for "shelf" covers all of it, and any other mod using the same behaviour, without
+            // patching ~100 entries.
             if (displayType != DefaultDisplayCategory)
             {
-                DisplayableAttributes shelfFromInterface = CopyOf(props?.GetDisplayableProps(slot, DefaultDisplayCategory));
+                DisplayableAttributes shelfFromInterface = ShapeOnly(props?.GetDisplayableProps(slot, DefaultDisplayCategory));
                 if (shelfFromInterface != null) return shelfFromInterface;
             }
 
-            // Inherit vanilla's own shelf entry when this item has no windowdisplay one.
-            //
-            // Worth the extra step because that object carries far more than a transform:
-            // Size, Behavior, Category and RandYRotAngle. The flag branches below can only
-            // synthesise a Size and a Transform, leaving Behavior at Default — so a bowl,
-            // which vanilla declares as `behavior: "Stacking"` with `size: {5,2,5}`, lost
-            // both its stacking and its real footprint and fell back to a generic 6x4x6.
-            //
-            // Anything authored for a vanilla shelf therefore works here untouched, and a
-            // patched `displayable.windowdisplay` still wins outright above. Note it wins
-            // WHOLESALE, not merged: an override that wants stacking has to say so itself.
+            // Inherit vanilla's own shelf entry when this item has no windowdisplay one - its SHAPE only (ShapeOnly): a
+            // folded garment keeps its folded model; vanilla's shelf size, transform and stacking are left out
+            // (measured size, the Resize key, free stacking). A patched `displayable.windowdisplay` wins outright
+            // above.
             if (displayType != DefaultDisplayCategory)
             {
-                DisplayableAttributes fromShelf = collectible.Attributes?["displayable"][DefaultDisplayCategory]
-                    .AsObject<DisplayableAttributes>();
+                DisplayableAttributes fromShelf = ShapeOnly(collectible.Attributes?["displayable"][DefaultDisplayCategory]
+                    .AsObject<DisplayableAttributes>());
                 if (fromShelf != null) return fromShelf;
             }
 
             if (collectible.Attributes?.IsTrue("shelvable") == true)
             {
-                return new DisplayableAttributes
-                {
-                    Size = DefaultItemSize,
-                    Transform = collectible.Attributes["onshelfTransform"].AsObject<ModelTransform>()
-                                ?? collectible.Attributes["onDisplayTransform"].AsObject<ModelTransform>()
-                };
+                // its own size, no vanilla shelf transform (see ShapeOnly)
+                return new DisplayableAttributes { Size = DefaultItemSize };
             }
 
             // Opt-in flag, so content can allow items vanilla would reject.
             //
-            // `universaldisplayable` is the name going forward. `windowdisplayable` is still
-            // read because it is PUBLISHED API — an item patch anywhere may already set it,
-            // and a flag that silently stops working is the worst kind of break. Nothing in
-            // this project's own content or patches ever used it, which is what makes
-            // introducing the new name free.
+            // `universaldisplayable` is the name going forward. `windowdisplayable` is still read because it is
+            // published API: an item patch anywhere may already set it.
             if (collectible.Attributes?.IsTrue("universaldisplayable") == true
                 || collectible.Attributes?.IsTrue("windowdisplayable") == true)
             {
@@ -685,14 +643,8 @@ namespace UniversalDisplayLib
             {
                 return new DisplayableAttributes
                 {
-                    // Matched to vanilla's flowerpot, which declares 6 x 7 x 6.
-                    //
-                    // Height used to decide where the plant itself sat, because the lift was
-                    // level x the plant's OWN height — which is why 7 had to match the pot.
-                    // It no longer does: `BEUniversalDisplay.StackBaseY` lifts by the heights of
-                    // the items actually underneath, so a plant lands on the rim of a pot of
-                    // any height. What this 7 still governs is the plant's own footprint and
-                    // how far it would lift anything stacked on top of IT.
+                    // Matched to vanilla's flowerpot, which declares 6 x 7 x 6. It governs the plant's own footprint
+                    // and how far it lifts anything stacked on top of it.
                     Size = PottedItemSize,
 
                     // Without this a plant cannot go ON a pot at all: stacking is gated on
@@ -701,28 +653,20 @@ namespace UniversalDisplayLib
 
                     Shape = potted.Shape,
 
-                    // The plant shape is modelled from the block FLOOR — measured, both
-                    // `contents.json` and `contents-lilyofthevalley.json` span Y 0..16 —
-                    // because its lowest voxels are meant to be buried in the pot's soil.
-                    // A 7-tall pot lifts the plant by 7 and puts the part that should be
-                    // hidden above the rim. That is the "it floats" report.
+                    // The plant shape is modelled from the block FLOOR — measured, both `contents.json` and
+                    // `contents-lilyofthevalley.json` span Y 0..16 — because its lowest voxels are meant to be buried
+                    // in the pot's soil. A 7-tall pot lifts the plant by 7 and puts the part that should be hidden
+                    // above the rim.
                     //
-                    // Cancelling that lift (7 voxels = 7/16 of a block) leaves the plant drawn
-                    // where it would sit inside a real pot.
+                    // Cancelling that lift (7 voxels = 7/16 of a block) leaves the plant drawn where it would sit
+                    // inside a real pot.
                     //
-                    // TUNED FOR A 7-TALL POT, which is vanilla's. Now that the lift follows the
-                    // item below, a pot of another height moves the plant by the difference —
-                    // deeper in a tall planter, higher out of a short pot. Only reachable by a
-                    // plant with no `plantContainable` transform of its own; if it looks wrong
-                    // on some modded pot, that is what the editor is for.
+                    // Tuned for a 7-tall pot, vanilla's: a pot of another height moves the plant by the difference.
                     //
-                    // A STARTING POINT, NOT A FINAL NUMBER. It is arithmetic, and the one
-                    // lesson this project keeps relearning is that display offsets get tuned
-                    // by eye. The transform editor's Window tab will now move a plant
-                    // properly, so nudge it and put the value found here.
+                    // A starting point: display offsets get tuned by eye in the transform editor's Window tab.
                     //
-                    // A plant declaring its own transform keeps it — that is the author
-                    // having already said where it goes.
+                    // A plant declaring its own transform keeps it — that is the author having already said where it
+                    // goes.
                     Transform = potted.Transform ?? new ModelTransform
                     {
                         Translation = new Vec3f(0f, -7f / 16f, 0f),
@@ -780,92 +724,72 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Feeds the transform editor the currently resolved transform.
         ///
-        /// The editor works in terms of a flat attribute name, but the real value lives
-        /// at displayable.&lt;category&gt;.transform. This pair of listeners bridges the two,
-        /// the same way vanilla bridges "onshelfTransform" to displayable.shelf.transform
-        /// — which is why cabinets have no editor entry of their own to copy.
+        /// The editor works in terms of a flat attribute name, but the real value lives at
+        /// displayable.&lt;category&gt;.transform. This pair of listeners bridges the two, the same way vanilla bridges
+        /// "onshelfTransform" to displayable.shelf.transform — which is why cabinets have no editor entry of their own
+        /// to copy.
         /// </summary>
         /// <summary>
-        /// Static so the mod system can register ONE listener rather than one per block
-        /// type. It needs no particular block: the value comes from the HELD item, and the
-        /// category is the same across every surface this mod ships.
+        /// Static so the mod system can register ONE listener rather than one per block type. It needs no particular
+        /// block: the value comes from the HELD item, and the category is the same across every surface this mod ships.
         /// </summary>
         /// <summary>
-        /// Which <c>displayable.&lt;category&gt;</c> entry the editor is working on: the one
-        /// belonging to the window being aimed at, or the default when aiming at nothing.
+        /// Which <c>displayable.&lt;category&gt;</c> entry the editor is working on: the one belonging to the window
+        /// being aimed at, or the default when aiming at nothing.
         ///
-        /// **Both editor handlers MUST use this.** They used to resolve it separately — the
-        /// get side from the aimed block, the set side hardcoded to
-        /// <see cref="DefaultDisplayCategory"/> — so the editor READ from
-        /// `displayable.windowdisplay` (what every shipped marker declares) and WROTE to
-        /// `displayable.shelf`. Editing an item therefore did nothing at all, or, on an item
-        /// that happens to have a vanilla shelf entry, quietly edited THAT instead.
-        ///
-        /// One derivation, one place. This codebase's recurring bug is a value computed in
-        /// more than one spot, and this is the fourth time it has been paid for.
+        /// Both editor handlers MUST use this: resolved separately, the editor would read one category and write
+        /// another, and an edit would do nothing or quietly change a vanilla shelf entry.
         /// </summary>
+        /// <summary>
+        /// The category the editor uses when it is not aimed at a display (it then edits the item in hand). Every
+        /// display mod built on the lib uses this one, and vanilla's own "shelf" data gives only its shape here
+        /// (ShapeOnly), so an edit written there never showed.
+        /// </summary>
+        public const string EditorFallbackCategory = "windowdisplay";
+
         public static string ResolveEditorCategory(ICoreClientAPI capi)
         {
             BlockSelection sel = capi == null ? null : BEUniversalDisplay.WindowSelection(capi.World.BlockAccessor, capi.World.Player?.CurrentBlockSelection);
-            if (sel == null) return DefaultDisplayCategory;
+            if (sel == null) return EditorFallbackCategory;
 
-            if (capi.World.BlockAccessor.GetBlock(sel.Position)?.GetBehavior<BlockBehaviorDisplaySurfaces>()
-                is not BlockBehaviorDisplaySurfaces bh)
-            {
-                return DefaultDisplayCategory;
-            }
+            // THE DISPLAY ResolveEditorTarget FINDS, so the item and its category come from one place: a display inside
+            // a chiselled block lives in the chiselled block's entity, and that block has no surfaces of its own.
+            BlockBehaviorDisplaySurfaces bh = BEUniversalDisplay.At(capi.World.BlockAccessor, sel.Position)?.SurfaceBehavior
+                ?? capi.World.BlockAccessor.GetBlock(sel.Position)?.GetBehavior<BlockBehaviorDisplaySurfaces>();
+            if (bh == null) return EditorFallbackCategory;
 
             // FROM THE SURFACE BEING AIMED AT, not from Surfaces[0].
             //
-            // The category is what separates one mod's display data from another's — a block
-            // declaring `psurface0-w16-h4-d16-box` reads `displayable.box`, and that is the
-            // whole mechanism by which someone else's mod keeps its transforms clear of this
-            // one's. Taking it from the first surface silently worked only while every surface
-            // on a block shared a category, which is true of every window here and need not be
-            // true of anyone else's block.
-            //
-            // The failure it caused was the bad kind: the editor READ and WROTE the same wrong
-            // key, so it looked consistent and self-confirming while editing an entry the
-            // surface never consults.
+            // The category separates one mod's display data from another's: a block declaring
+            // `psurface0-w16-h4-d16-box` reads `displayable.box`. Surfaces on one block need not share a category.
             DisplaySlotId loc = DisplaySlotId.Decode(sel.SelectionBoxId);
             return bh.GetDisplayCategory(loc?.SurfaceIndex ?? 0);
         }
 
         /// <summary>
-        /// Writes the edited transform back to <c>displayable.&lt;category&gt;.transform</c>
-        /// on the held item, creating whatever part of that structure does not exist yet.
+        /// Writes the edited transform back to <c>displayable.&lt;category&gt;.transform</c> on the held item, creating
+        /// whatever part of that structure does not exist yet.
         ///
-        /// **Creating it matters — that is the authoring case.** The old code only wrote when
-        /// the entry was already there, so tuning an item that has no patch yet, which is
-        /// exactly what the editor is for, silently did nothing.
+        /// Creating it matters: tuning an item with no patch yet is what the editor is for.
         ///
-        /// Every level is created explicitly rather than assumed. Vanilla's own firepit
-        /// handler is the cautionary tale here: it creates the `attributes` object and then
-        /// does `Token["inFirePitProps"]["transform"] = ...` on a key that does not exist,
-        /// which is a NullReferenceException out of the GUI thread for any item that is not
-        /// already firepit-renderable.
+        /// Every level is created explicitly: vanilla's firepit handler assumes one and throws a NullReferenceException
+        /// from the GUI thread.
         /// </summary>
         /// <summary>
-        /// What the transform editor should be editing: **the stored item under the
-        /// crosshair**, falling back to the held one.
+        /// What the transform editor should be editing: **the stored item under the crosshair**, falling back to the
+        /// held one.
         ///
-        /// **VANILLA'S DIALOG ONLY KNOWS ABOUT THE HELD ITEM, AND THAT IS THE COMPLAINT** —
-        /// *"you have to have a copy of the item in your hand which is a pain"*. It is also
-        /// not a real constraint: the dialog reaches the value through OUR two event-bus
-        /// handlers, so what it reads and writes is entirely our choice. Pointing at the item
-        /// on the sill is both fewer steps and less error-prone than finding a spare copy.
+        /// Vanilla's dialog only knows about the held item, but it reaches the value through our two event-bus
+        /// handlers, so what it reads and writes is our choice.
         ///
-        /// Opening the dialog RELEASES THE MOUSE, which freezes `CurrentBlockSelection` on
-        /// whatever was last aimed at — so this locks onto the item you were pointing at when
-        /// you opened it and holds there while you drag sliders. That is the behaviour wanted,
-        /// arrived at for free.
+        /// Opening the dialog RELEASES THE MOUSE, which freezes `CurrentBlockSelection` on whatever was last aimed at —
+        /// so this locks onto the item you were pointing at when you opened it and holds there while you drag sliders.
         ///
-        /// **The trade-off, stated plainly:** the dialog's own preview still renders the item
-        /// in your hand, so if those differ the preview shows the wrong model. The windows in
-        /// the world show the truth and update live, which is what is actually being judged.
+        /// The dialog's own preview still renders the item in your hand, so if those differ the preview shows the wrong
+        /// model; the windows in the world show the truth and update live.
         ///
-        /// Same rule as the size editor, deliberately — one mental model: the tool works on
-        /// what you point at, and on what you hold only when you point at nothing.
+        /// Same rule as the size editor: the tool works on what you point at, and on what you hold only when you point
+        /// at nothing.
         /// </summary>
         public static ItemSlot ResolveEditorTarget(ICoreClientAPI capi)
         {
@@ -881,48 +805,15 @@ namespace UniversalDisplayLib
             return capi?.World.Player?.InventoryManager?.ActiveHotbarSlot;
         }
 
-        // VANILLA DISPLAY BLOCKS ARE DELIBERATELY NOT TARGETED. Removed 2026-08-02 after a run.
+        // VANILLA DISPLAY BLOCKS ARE DELIBERATELY NOT TARGETED.
         //
-        // Targeting a cabinet worked — `BEBehaviorDisplay.InventoryInv` is public and our slot
-        // ids decode with `BlockBehaviorDisplay.decodeSlotid`, no translation needed. What does
-        // not work is SHOWING the result: vanilla regenerates its item meshes only when its own
-        // `meshesGenerated` flag is cleared, and the method that does it is `protected`. The
-        // one reachable lever, clearing the shared `ObjectCacheUtil` mesh cache, empties meshes
-        // for every display block of that class and refills none of them — the item VANISHES.
-        //
-        // So the honest state was: edits written correctly, nothing visibly moving until the
-        // item was taken and replaced. A tool that silently does the right thing while looking
-        // broken is worse than one that does not offer the option, so it does not.
-        //
-        // If this is ever wanted, the way in is to SUBCLASS `BEBehaviorDisplay` and expose
-        // `MarkMeshesDirty` publicly on your own block — that leaves vanilla's blocks alone.
+        // Vanilla regenerates its item meshes only when its own `meshesGenerated` flag is cleared, and the method that
+        // does it is `protected`, so an edit would not show until the item is taken and replaced. The one reachable
+        // lever, clearing the shared `ObjectCacheUtil` mesh cache, makes items vanish.
 
-        // WHAT NOT TO DO HERE, measured 2026-08-02: DO NOT CLEAR VANILLA'S MESH CACHE.
-        //
-        // The obvious-looking invalidation is
-        //
-        //     ObjectCacheUtil.GetOrCreate(capi, "meshesDisplay-" + beh.ClassCode, ...).Clear();
-        //
-        // and it makes the displayed item VANISH. Two reasons, both true of vanilla's
-        // `BEBehaviorDisplay` (public source, vssurvivalmod):
-        //
-        //   * that dictionary is SHARED by every display block of that class in the world, so
-        //     one edit throws away meshes belonging to every other cabinet too, and
-        //   * emptying it does not make anything rebuild. Vanilla regenerates only when its own
-        //     `meshesGenerated` flag is cleared, and the method that does it —
-        //     `MarkMeshesDirty` — is `protected`. So the cache empties, nothing refills it, and
-        //     an empty mesh is non-null and wins every fallback after it. That failure mode is
-        //     already in this project's notes from the mushrooms.
-        //
-        // The consequence, stated plainly: on a VANILLA display block a transform edit is
-        // written correctly but does not show until the item is taken and replaced, or the
-        // chunk reloads. Ours refresh live because `ApplyTransformEdit` can reach our own
-        // invalidation.
-        //
-        // The fix for a mod that wants live preview on its own board is to SUBCLASS
-        // `BEBehaviorDisplay` and expose the protected `MarkMeshesDirty` as a public method —
-        // about fifteen lines, no dependency on this lib, and it leaves vanilla's own blocks
-        // untouched.
+        // Do not clear vanilla's mesh cache (`ObjectCacheUtil` "meshesDisplay-" + ClassCode): that dictionary is shared
+        // by every display block of that class, and emptying it rebuilds nothing, so the item vanishes. A mod wanting
+        // live preview on its own board can subclass `BEBehaviorDisplay` and expose the protected `MarkMeshesDirty`.
 
         public static void HandleSetTransform(ICoreClientAPI capi, TreeAttribute tree)
         {
@@ -933,27 +824,20 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Applies a live transform to a TYPE-KEYED item — clutter and anything else using
-        /// <c>TypedDisplayableProps</c> — by writing into that behaviour's own map rather than
-        /// into <c>collectible.Attributes.displayable</c>.
+        /// Applies a live transform to a TYPE-KEYED item — clutter and anything else using <c>TypedDisplayableProps</c>
+        /// — by writing into that behaviour's own map rather than into <c>collectible.Attributes.displayable</c>.
         ///
-        /// **Both halves of this matter, and the ordinary path gets both wrong for clutter.**
+        /// The ordinary path is wrong for clutter twice. `collectible.Attributes` is shared by every piece of clutter
+        /// in the game, so editing one pot would move all ~100 objects. And writing to `displayable.<category>` creates
+        /// an entry carrying only a transform, and resolution is wholesale, so the size would fall through to <see
+        /// cref="DefaultItemSize"/>.
         ///
-        ///  * WRONG SCOPE. `collectible.Attributes` is shared by every piece of clutter in the
-        ///    game, so editing one pot moved all ~100 objects.
-        ///  * WRONG SIZE, and this is the one that shows. Writing to `displayable.<category>`
-        ///    creates an entry carrying ONLY a transform, and resolution is wholesale — so the
-        ///    size stopped coming from the behaviour, found nothing in the new entry, and fell
-        ///    through to <see cref="DefaultItemSize"/>. Reported as the item "just getting
-        ///    smaller instead of adjusting properly", which is precisely 6x4x6 arriving.
+        /// Writing into `PropsByCode[type][category]` avoids both: it is the same structure vanilla reads, scoped to
+        /// the one type, and the existing size is carried across so nothing is lost by tuning a transform.
         ///
-        /// Writing into `PropsByCode[type][category]` avoids both: it is the same structure
-        /// vanilla reads, scoped to the one type, and the existing size is carried across so
-        /// nothing is lost by tuning a transform.
-        ///
-        /// The map is runtime state on a collectible, so it lasts the session and is rebuilt on
-        /// the next world load — the same lifetime the size overrides have, and the same reason
-        /// neither is a substitute for writing the patch out.
+        /// The map is runtime state on a collectible, so it lasts the session and is rebuilt on the next world load —
+        /// the same lifetime the size overrides have, and the same reason neither is a substitute for writing the patch
+        /// out.
         /// </summary>
         public static bool WriteTypedTransform(CollectibleObject collectible, string type,
                                                string category, ModelTransform tf)
@@ -997,16 +881,14 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Writes a transform onto a collectible's <c>displayable.&lt;category&gt;</c> entry,
-        /// creating whatever part of that structure is missing.
+        /// Writes a transform onto a collectible's <c>displayable.&lt;category&gt;</c> entry, creating whatever part of
+        /// that structure is missing.
         ///
-        /// Split out of <see cref="HandleSetTransform"/> so the tuner dialog writes by exactly
-        /// the same route as vanilla's editor. Two ways of storing the same value would be the
-        /// "derived in more than one place" bug again, and this one would show up as an item
-        /// that looks right until something else touches it.
+        /// Split out of <see cref="HandleSetTransform"/> so the tuner dialog writes by the same route as vanilla's
+        /// editor.
         /// </summary>
         /// <param name="category">The display category to write under; null = the one under the crosshair. The tuner
-        /// passes the category of the item it is pinned to, which the crosshair may have left (2026-10-22).</param>
+        /// passes the category of the item it is pinned to, which the crosshair may have left.</param>
         public static void WriteTransform(ICoreClientAPI capi, CollectibleObject collectible, ModelTransform tf, string category = null)
         {
             if (collectible == null || tf == null) return;
@@ -1036,9 +918,7 @@ namespace UniversalDisplayLib
 
         public static void HandleGetTransform(ICoreClientAPI capi, TreeAttribute tree, ref EnumHandling handling)
         {
-            // Reads from the SAME target the set side writes to — the aimed item first. The
-            // two drifting apart is the exact bug that shipped in 1.0.2: the get side resolved
-            // the category from the aimed window while the set side hardcoded the default.
+            // Reads from the SAME target the set side writes to: the aimed item first.
             ItemSlot target = ResolveEditorTarget(capi);
             if (target == null || target.Empty) return;
 
@@ -1050,11 +930,19 @@ namespace UniversalDisplayLib
             dattr.Transform.ToTreeAttribute(tree);
         }
 
-        // EditorCategory (first surface wins) REMOVED 2026-08-02 — it was the bug above.
-        // Use GetDisplayCategory(surfaceIndex) with the index decoded from the aimed slot id.
+        // EditorCategory (first surface wins) was removed: it was the bug above. Use GetDisplayCategory(surfaceIndex)
+        // with the index decoded from the aimed slot id.
 
         public static Size3f GetItemSize(ItemSlot slot, string displayType)
             => GetDisplayableAttributes(slot, displayType)?.Size;
+
+        /// <summary>
+        /// The entry an item with no display data gets: its model at its OWN size, untransformed. The Resize key sizes
+        /// it to fit before or after placing; the footprint is measured from how it is drawn (MeasuredItemSizes). A new
+        /// object for every caller.
+        /// </summary>
+        internal static DisplayableAttributes AnyItemEntry(CollectibleObject collectible)
+            => collectible == null ? null : new DisplayableAttributes { Size = DefaultItemSize };
 
         /// <summary>
         /// Items are positioned by their centre, so the mesh origin sits half a
@@ -1070,19 +958,14 @@ namespace UniversalDisplayLib
         /// <summary>
         /// An item's width and length as they actually sit once its own rotation is applied.
         ///
-        /// The declared <c>Size</c> describes the item unrotated. Everything reasoning about
-        /// the space an item occupies — its selection box, what it collides with, whether it
-        /// fits — has to use the turned footprint, or a rotated item looks one way and
-        /// behaves another. That was the case for a long time: rotation was applied in
-        /// <c>BuildSlotMatrix</c> to the MESH only, so wrenching a letter or a hammer turned
-        /// the model while its box stayed in the original orientation. Invisible on a square
-        /// item, plainly wrong on a long one.
+        /// The declared <c>Size</c> describes the item unrotated. Everything reasoning about the space an item occupies
+        /// — its selection box, what it collides with, whether it fits — has to use the turned footprint, or a rotated
+        /// item looks one way and behaves another.
         ///
-        /// Snapped to the nearest quarter turn deliberately. A footprint is an axis-aligned
-        /// box, so an item at 45° would need the bounding box of a rotated rectangle — which
-        /// is LARGER than either orientation, meaning things would fit worse the more you
-        /// turned them. That is the opposite of what rotating is for. Under 45° of turn keeps
-        /// the original footprint; past it, width and length swap.
+        /// Snapped to the nearest quarter turn deliberately. A footprint is an axis-aligned box, so an item at 45°
+        /// would need the bounding box of a rotated rectangle — which is LARGER than either orientation, meaning things
+        /// would fit worse the more you turned them. Under 45° of turn keeps the original footprint; past it, width and
+        /// length swap.
         /// </summary>
         public static Size3f RotatedFootprint(Size3f size, float rotDeg)
         {
@@ -1102,9 +985,9 @@ namespace UniversalDisplayLib
         public void RenderSelectionBoxesOn(BEUniversalDisplay display, BlockSelection blockSel, RenderBoxDelegate renderBoxHandler)
         {
             RenderBoxDelegate drawAtHost = renderBoxHandler;
-            // VS SIDING (2026-10-17): a block in a siding wall's space is moved off the panel - the game's boxes come
-            // back moved, our own placing outline is built where it would be without siding. So everything below works
-            // unmoved (the aimed box taken back) and every box drawn is moved on the way out (SidingShift).
+            // VS SIDING: a block in a siding wall's space is moved off the panel - the game's boxes come back moved,
+            // our own placing outline is built where it would be without siding. So everything below works unmoved (the
+            // aimed box taken back) and every box drawn is moved on the way out (SidingShift).
             Vec3f siding = blockSel?.Position == null ? null : SidingShift.At(blockSel.Position, block);
             if (siding != null)
             {
@@ -1151,28 +1034,30 @@ namespace UniversalDisplayLib
             if (BEUniversalDisplay.IsHiddenPartBox((hovered as CuboidfWithId)?.Id ?? boxId)) return;
             DisplaySlotId loc = DisplaySlotId.Decode(boxId);
 
+            // A LEVITATING ITEM'S OUTLINE BOBS WITH IT. Only the drawing: the box the game aims with stays at the
+            // middle height (it is rebuilt on changes, not every frame). It does not turn - an outline is upright.
+            if (loc is { IsPlacedItem: true })
+            {
+                float lift = be.HoverLift(loc.Encoded);
+                if (lift != 0f) hovered = hovered.OffsetCopy(0f, lift, 0f);
+            }
+
             ItemSlot heldSlot = capi.World.Player.Entity.RightHandItemSlot;
 
             // Not aiming at a placement pad, or nothing placeable in hand — plain outline
             if (loc == null || loc.IsPlacedItem || heldSlot == null || heldSlot.Empty)
             {
-                // FRAME AND PANE BOXES ALWAYS DRAW, and this line was MISSING until
-                // 2026-08-08. `loc == null` is a frame or pane box, and the two tests below
-                // both require IsPlacedItem — so aiming at a frame fell through the whole
-                // branch to the `return` without ever calling renderBoxHandler, and the box
-                // that tells you where to click to open a window was simply never outlined.
+                // FRAME AND PANE BOXES ALWAYS DRAW. `loc == null` is a frame or pane box, and the two tests below both
+                // require IsPlacedItem — so aiming at a frame fell through the whole branch to the `return` without
+                // ever calling renderBoxHandler, and the box that tells you where to click to open a window was simply
+                // never outlined.
                 //
-                // The comment here already said these must never be hidden; only the code
-                // disagreed. Present in the 2026-08-06 backup too, so it shipped in 1.1.0.
-                // Noticed on the corner window, whose frame is the first one you aim at with
-                // nothing else nearby to hit instead.
-                //
-                // Implementing ICustomSelectionBoxRender REPLACES the default rendering, so
-                // drawing nothing here really does mean nothing on screen.
+                // Implementing ICustomSelectionBoxRender REPLACES the default rendering, so drawing nothing here really
+                // does mean nothing on screen.
                 if (loc == null)
                 {
-                    // ...except an item's box from a window below, carried here as a guest (a stack reaching up into this
-                    // block, 2026-10-10): that follows "Show Placed Item Box" like the window's own items
+                    // ...except an item's box from a window below, carried here as a guest: that follows "Show Placed
+                    // Item Box" like the window's own items
                     bool guestItem = boxId != null && boxId.StartsWith(BEUniversalDisplay.GuestBoxPrefix, StringComparison.Ordinal)
                         && DisplaySlotId.Decode(boxId.Substring(boxId.IndexOf(':', BEUniversalDisplay.GuestBoxPrefix.Length) + 1)) is { IsPlacedItem: true };
                     if (!guestItem || ShouldDrawPlacedItemBox())
@@ -1185,10 +1070,8 @@ namespace UniversalDisplayLib
                     renderBoxHandler(hovered, lineWidth, block.GetSelectionColor(capi, blockSel.Position));
                 }
 
-                // AIMING AT AN ITEM WITH SOMETHING IN HAND MEANS STACKING, so outline where
-                // the copy would land as well. A pad placement gets a footprint box and a
-                // ghost; without this a stacked one got a ghost floating with nothing under
-                // it, and the box is the half that answers "will the next one fit".
+                // AIMING AT AN ITEM WITH SOMETHING IN HAND MEANS STACKING, so outline where the copy would land as
+                // well. A stacked one needs its box too: that answers "will the next one fit".
                 if (loc is { IsPlacedItem: true } && heldSlot is { Empty: false })
                 {
                     DrawStackFootprint(be, loc, heldSlot, lineWidth, renderBoxHandler, blockSel);
@@ -1239,8 +1122,8 @@ namespace UniversalDisplayLib
 
             if (!ShouldDrawFootprintBox()) return;
 
-            // The outline is the GHOST's - measured from the mesh it draws (2026-10-06); whether it fits (the colour)
-            // still comes from the written footprint, as the placement does.
+            // The outline is the GHOST's - measured from the mesh it draws; whether it fits (the colour) still comes
+            // from the written footprint, as the placement does.
             if (!OutlineFromSize(heldSlot, surface.DisplayCategory))
                 preview = (ghostAttr == null ? null : be.GhostBox(loc.Encoded, heldSlot, ghostAttr, PreviewRotationDeg(be, surface))) ?? preview;
 
@@ -1289,16 +1172,9 @@ namespace UniversalDisplayLib
             // slot coordinates, as the ghost does; a matching current pad is unnecessary.
             Vec3f local = StackPreviewOrigin(surface, target);
 
-            // NO 1-voxel lift here, unlike the pad path. That path starts the box at 0.0625 so
-            // it clears the surface it is drawn on, which is invisible on an empty sill — but
-            // a stacked box has the item BELOW it to be judged against, and the same voxel
-            // read as the outline floating above where the item lands.
-            //
-            // The item's own base is (surfacePos.Y + StackBaseY), and `local.Start` is the
-            // surface, so starting at 0 and lifting by StackBaseY puts the box exactly where
-            // the mesh goes. The SAME call, not a second copy of the sum — this line used to
-            // read `target.Y * itemSize.Height`, which measured the held item against itself
-            // and so drew the box where the pile below did not actually end.
+            // No 1-voxel lift here, unlike the pad path: a stacked box is judged against the item below it, and the
+            // voxel would read as the outline floating. Starting at 0 and lifting by StackBaseY puts the box where the
+            // mesh goes.
             Cuboidf preview = new Cuboidf(0f, 0f, 0f,
                                           itemSize.Width / 16f,
                                           itemSize.Height / 16f,
@@ -1393,18 +1269,15 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// The angle the item in hand would be placed at on this surface: the player's
-        /// pending quarter turn plus the surface's own facing.
+        /// The angle the item in hand would be placed at on this surface: the player's pending quarter turn plus the
+        /// surface's own facing.
         ///
-        /// Shared by the outline box and the ghost mesh deliberately. A value worked out
-        /// in two places is this codebase's recurring bug — the mesh, the footprint and
-        /// the particles each derived an item's angle separately and produced three
-        /// distinct faults before they were unified on ItemRotationDeg.
+        /// Shared by the outline box and the ghost mesh.
         /// </summary>
         /// <summary>
-        /// <c>"outline": "size"</c> in an item's displayable entry (any category, or the shelf one it inherits; per variant
-        /// with <c>outlineByType</c>): outline it by its written size instead of measuring its drawn mesh. For crossed-plane
-        /// models - flowers, grass, ferns - whose mesh is a whole block of mostly see-through sheet (Calm, 2026-10-06).
+        /// <c>"outline": "size"</c> in an item's displayable entry (any category, or the shelf one it inherits; per
+        /// variant with <c>outlineByType</c>): outline it by its written size instead of measuring its drawn mesh. For
+        /// crossed-plane models - flowers, grass, ferns - whose mesh is a whole block of mostly see-through sheet.
         /// </summary>
         public static bool OutlineFromSize(ItemSlot slot, string category)
         {
@@ -1443,7 +1316,7 @@ namespace UniversalDisplayLib
                                   DisplaySlotId loc, Size3f rotatedSize)
         {
             if (be == null || surface == null || loc == null || rotatedSize == null) return false;
-            rotatedSize = BEUniversalDisplay.FitSize(rotatedSize); // half a voxel of give on every side (lib 1.3.1)
+            rotatedSize = BEUniversalDisplay.FitSize(rotatedSize); // half a voxel of give on every side
 
             Vec3f offset = GetCentreOffset(rotatedSize);
 
@@ -1512,14 +1385,21 @@ namespace UniversalDisplayLib
             dattr = GetDisplayableAttributes(heldSlot, surface.DisplayCategory ?? "shelf");
             if (dattr?.Size == null) return false;
 
-            // AIMING AT AN ITEM MEANS STACKING ONTO IT, so preview where the copy would
-            // actually land rather than giving up. This used to `return false` on a placed
-            // item, so the one case where a player most wants to know what they are about to
-            // get — another one on top, at the pile's angle — was the one case with no ghost.
+            // The levitating display block: its one centred spot wherever the surface is aimed at, as TryPut places it
+            if (be.TryFloatBlockSpot(loc, dattr, out DisplaySlotId floatSpot, out bool floatFree))
+            {
+                loc = floatSpot;
+                rotDeg = PreviewRotationDeg(be, surface);
+                fits = floatFree && FitsAt(be, surface, loc, RotatedFootprint(dattr.Size, rotDeg))
+                       && be.EmbeddedPlacementFits(loc, dattr, rotDeg);
+                return true;
+            }
+
+            // AIMING AT AN ITEM MEANS STACKING ONTO IT, so preview where the copy would actually land rather than
+            // giving up.
             //
-            // The block entity resolves it, because the walk up the pile and the inherited
-            // angle both need the inventory. `loc` becomes the TARGET slot, which is what the
-            // renderer builds its matrix from.
+            // The block entity resolves it, because the walk up the pile and the inherited angle both need the
+            // inventory. `loc` becomes the TARGET slot, which is what the renderer builds its matrix from.
             if (loc.IsPlacedItem)
             {
                 if (!be.TryResolveStackTargetOn(loc, dattr, out DisplaySlotId target, out rotDeg, out bool allowed, blockSel))
@@ -1529,10 +1409,10 @@ namespace UniversalDisplayLib
 
                 loc = target;
                 fits = allowed && be.EmbeddedPlacementFits(target, dattr, rotDeg);
-                // The ghost's angle REPLACES ItemRotationDeg in BuildSlotMatrix, and that one includes the surface's own
-                // facing - as PreviewRotationDeg does on the pad path. The stack resolver gives the angle without it, so
-                // on a turned surface (a corner shelf's side) the stacked ghost faced the wrong way (Calm, 2026-10-19).
-                // Surfaces facing 0 (ordinary shelves, ground, carved floors) never showed it.
+                // The ghost's angle REPLACES ItemRotationDeg in BuildSlotMatrix, and that one includes the surface's
+                // own facing - as PreviewRotationDeg does on the pad path. The stack resolver gives the angle without
+                // it, so on a turned surface (a corner shelf's side) the stacked ghost faced the wrong way. Surfaces
+                // facing 0 (ordinary shelves, ground, carved floors) never showed it.
                 rotDeg += be.SurfaceFacingDeg(surface);
                 return true;
             }
@@ -1546,27 +1426,21 @@ namespace UniversalDisplayLib
         // ── Swap aim point ──────────────────────────────────────────────────
 
         /// <summary>
-        /// Whether the box under the cursor is somewhere a ctrl+wrench block swap may be
-        /// taken from.
+        /// Whether the box under the cursor is somewhere a ctrl+wrench block swap may be taken from.
         ///
-        /// Normally that is the frame or a pane, which is what a player sees and aims at.
-        /// A block may legitimately declare NO frame boxes at all, though — the custom
-        /// chiselled window does, so that the only selection box in the block is the
-        /// chiselled block the player put there — and then the swap had no aim point
-        /// anywhere and was simply unreachable, silently.
+        /// Normally that is the frame or a pane, which is what a player sees and aims at. A block may declare NO frame
+        /// boxes at all (the custom chiselled window does, so its only selection box is the chiselled block), and the
+        /// swap would then have no aim point.
         ///
-        /// So with no frame boxes declared, any box except a placed item stands in for the
-        /// frame. Grid pads do nothing on a ctrl+wrench otherwise, so nothing is taken away.
+        /// So with no frame boxes declared, any box except a placed item stands in for the frame. Grid pads do nothing
+        /// on a ctrl+wrench otherwise, so nothing is taken away.
         ///
-        /// The placed-item exclusion is kept, but its ORIGINAL reason is gone: it used to
-        /// stop the swap colliding with ctrl+wrench reverse-rotation, which was removed on
-        /// 2026-07-30 when rotation moved to the mouse wheel. It stays because swapping the
-        /// whole block by clicking an item sitting on it would be a surprising thing to do,
-        /// not because anything else now competes for that click.
+        /// Placed items are excluded because swapping the whole block by clicking an item on it would be a surprising
+        /// thing to do.
         ///
-        /// Deliberately NOT the same question as <c>onFrame</c> at the call site, which
-        /// also gates pane toggling and the fall-through to item placement — widening that
-        /// would make a pad click return early and stop items being placed at all.
+        /// Deliberately NOT the same question as <c>onFrame</c> at the call site, which also gates pane toggling and
+        /// the fall-through to item placement — widening that would make a pad click return early and stop items being
+        /// placed at all.
         /// </summary>
         public static bool IsSwapAimPoint(BlockBehaviorDisplaySurfaces bh, string boxId)
         {
@@ -1610,13 +1484,13 @@ namespace UniversalDisplayLib
         private bool HasOpenablePane => FrameBoxGroups.Any(g => g.OpenFrameBox != null || g.ClosedFrameBox != null || !string.IsNullOrEmpty(g.AnimOpen));
 
         /// <summary>
-        /// Whether clicking this box would move a pane. A fixed part kept in a group of its own with no
-        /// pane ("frame1-0" - the tall sash's upper sash, the tall awning's bottom glass) opens nothing,
-        /// so it gets no Open/Close prompt (2026-10-05). Unparseable ids keep the prompt, as before.
+        /// Whether clicking this box would move a pane. A fixed part kept in a group of its own with no pane
+        /// ("frame1-0" - the tall sash's upper sash, the tall awning's bottom glass) opens nothing, so it gets no
+        /// Open/Close prompt. Unparseable ids keep the prompt, as before.
         /// </summary>
         private bool OpensSomething(string boxId)
         {
-            // a fixed part's box (measured, 2026-10-06) opens nothing
+            // a fixed part's box opens nothing
             if (boxId != null && boxId.StartsWith(BEUniversalDisplay.PartBoxPrefix, StringComparison.Ordinal)) return false;
             if (boxId == null || !boxId.StartsWith("frame", StringComparison.Ordinal)) return true;
             int dash = boxId.IndexOf('-');
@@ -1667,6 +1541,19 @@ namespace UniversalDisplayLib
 
             WorldInteraction[] help = base.GetPlacedBlockInteractionHelp(world, selection, forPlayer, ref handling);
 
+            // the levitating display block: put its one item on, or take it off (LevitatingDisplay.cs)
+            if (BEUniversalDisplay.At(world.BlockAccessor, selection.Position) is { IsFloatBlock: true } floatBlock)
+                help = (help ?? Array.Empty<WorldInteraction>()).Append(floatBlock.FloatBlockHelp());
+
+            // An item that does something itself while displayed: its own lines when it is the item aimed at.
+            if (DisplaySlotId.Decode(selection.SelectionBoxId) is { IsPlacedItem: true }
+                && BEUniversalDisplay.At(world.BlockAccessor, selection.Position) is { } shown
+                && shown.GetSelectedNonEmptySlotId(selection) is { } storedId
+                && (shown.Inventory as InventoryInfinite)?.SlotsByslotId.TryGetValue(storedId, out ItemSlot stored) == true
+                && stored.Itemstack?.Collectible?.GetCollectibleInterface<IContainedInteractable>() is { } own
+                && own.GetContainedInteractionHelp(shown, stored, forPlayer, selection) is { Length: > 0 } ownHelp)
+                help = (help ?? Array.Empty<WorldInteraction>()).Append(ownHelp);
+
             string boxId = selection.SelectionBoxId;
             bool onFrame = boxId == null
                            || boxId == BEUniversalDisplay.WindowBoxId
@@ -1675,17 +1562,32 @@ namespace UniversalDisplayLib
                            || boxId.StartsWith("frame", StringComparison.Ordinal);
             if (!onFrame && !IsSwapAimPoint(this, boxId)) return help;
 
-            // canOpen ABSENT counts as true, as BEUniversalDisplay.CanOpen reads it - such a block does open, so the help
-            // should say so (2026-10-22) - but only when it has a pane that opens, so a plain shelf never offers "Open"
+            // canOpen ABSENT counts as true, as BEUniversalDisplay.CanOpen reads it - such a block does open, so the
+            // help should say so - but only when it has a pane that opens, so a plain shelf never offers "Open"
             JsonObject canOpen = block.Attributes?["canOpen"];
             bool opens = canOpen?.Exists == true ? canOpen.AsBool(false) : HasOpenablePane;
             if (onFrame && opens && OpensSomething(boxId))
             {
-                help = help.Append(new WorldInteraction
+                // latched: no "Open" where the latch locks it - an inner door still opens (WindWindows.LatchLocks)
+                bool latched = BEUniversalDisplay.At(world.BlockAccessor, selection.Position)?.LatchLocks(boxId) == true;
+                if (!latched)
+                    help = help.Append(new WorldInteraction
+                    {
+                        ActionLangCode = ToggleLabel(world, selection, boxId),
+                        MouseButton = EnumMouseButton.Right
+                    });
+
+                // the latch: Sprint + right-click (anything but the wrench) locks it shut - for players, wind and the rest (WindWindows.cs)
+                if (BEUniversalDisplay.At(world.BlockAccessor, selection.Position) is { CanLatch: true } latchable)
                 {
-                    ActionLangCode = ToggleLabel(world, selection, boxId),
-                    MouseButton = EnumMouseButton.Right
-                });
+                    help = help.Append(new WorldInteraction
+                    {
+                        ActionLangCode = latchable.Latched ? "universaldisplaylib:blockhelp-unlatch" : "universaldisplaylib:blockhelp-latch",
+                        // must match the key BEUniversalDisplay reads for it - controls.CtrlKey, as the wrench swap
+                        HotKeyCode = "ctrl",
+                        MouseButton = EnumMouseButton.Right
+                    });
+                }
             }
 
             if (BlockSwapHelper.HasSwapTargets(block))

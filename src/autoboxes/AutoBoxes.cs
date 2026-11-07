@@ -18,7 +18,7 @@ namespace UniversalDisplayLib;   // CHANGE: the namespace your own code files us
 //
 // Files: AutoBoxes.cs (this - the tools), AutoBoxesFiller.cs (the filler block), AutoBoxesMeasure.cs
 // (the box from a block's model) + assets blocktypes/autoboxesfiller.json. Guide: AUTOBOXES-GUIDE.md.
-// From Taxidermy by Calminaion - free to copy into any mod.
+// Free to copy into any mod.
 // ─────────────────────────────────────────────────────────────────────────────────────────────
 
 /// <summary>A block entity whose box reaches past its block. The filler asks it for its share of each space.</summary>
@@ -111,8 +111,8 @@ public static class AutoBoxes
             if (result.Contains(o)) continue;
             var pos = owner.AddCopy(o.Item1, o.Item2, o.Item3);
             var ba = world.BlockAccessor;
-            // UDL: another owner's filler already here (two shutters folding into one gap) - share the space; the window's
-            // room check before opening made sure the two do not overlap here (Calm, 2026-10-07, "like we had before")
+            // UDL: another owner's filler already here (two shutters folding into one gap) - share the space; the
+            // window's room check before opening made sure the two do not overlap here
             if (ba.GetBlockEntity(pos) is BEAutoBoxesFiller shared && shared.Owner != null && !shared.Owner.Equals(owner)
                 && OwnerAt(ba, shared.Owner) != null)
             {
@@ -144,7 +144,7 @@ public static class AutoBoxes
         OwnerAt(ba, owner) != null || (OwnerStillValid?.Invoke(ba, owner) ?? ba.GetBlockEntity(owner) != null);
 
     // UDL: the kit's SyncCarried (fillers for an owner without the interface) is left out - every UDL owner implements
-    // it. Taxidermy uses it from its own copy; the master is Tools/AutoBoxes Kit. (code check 2026-10-22)
+    // it. Taxidermy uses it from its own copy; the master is Tools/AutoBoxes Kit.
 
     /// <summary>Server: removes every filler this owner holds (the owner was broken or picked up).</summary>
     public static void ReleaseAll(IWorldAccessor world, BlockPos owner, IEnumerable<(int x, int y, int z)> held)

@@ -57,9 +57,9 @@ public sealed class ChiselShelfSystem : ModSystem
         {
             EmbeddedLightPropagation.Apply(harmony, api.Logger);
         }
-        // Each group is applied whole or not at all (SafePatch, lib 1.3.1). A carved block's stored items always drop
-        // when it is broken (BEBehaviorChiselShelf), so a missing group never loses items; without the boxes, the
-        // chisel guard or the storage hooks no NEW item can be put into a chiselled block (StorageBlocked).
+        // Each group is applied whole or not at all (SafePatch). A carved block's stored items always drop when it is
+        // broken (BEBehaviorChiselShelf), so a missing group never loses items; without the boxes, the chisel guard or
+        // the storage hooks no NEW item can be put into a chiselled block (StorageBlocked).
         bool boxes = SafePatch.Group(harmony, api.Logger, "items stored in chiselled blocks",
             "stored items there cannot be aimed at or bumped into",
             SafePatch.On(typeof(BlockMicroBlock), nameof(Block.GetCollisionBoxes)).After(me, nameof(Collision)),
@@ -90,9 +90,8 @@ public sealed class ChiselShelfSystem : ModSystem
     }
 
     /// <summary>
-    /// True when a game update broke a hook carved storage needs (lib 1.3.1) - new items then cannot be put into
-    /// chiselled blocks. Without Chiseled Block Display the storage behaviour is never registered, so nothing is placed
-    /// there either way.
+    /// True when a game update broke a hook carved storage needs: new items then cannot be put into chiselled blocks.
+    /// Without Chiseled Block Display the storage behaviour is never registered, so nothing is placed there either way.
     /// </summary>
     internal static bool StorageBlocked { get; private set; }
 
@@ -256,12 +255,12 @@ public sealed class ChiselShelfSystem : ModSystem
     }
 
     /// <summary>
-    /// CHISEL EDITING (trial, Calm 2026-10-19: "allow chiselling when an item is on there" - "edit around items"; rotate /
-    /// flip refused while items are stored). Every chisel stroke reaches the game through UpdateVoxel with the aimed voxel,
-    /// the face and add/remove; the mode decides the rest (public vssurvivalmod ChiselMode.Apply: a size-N mode removes the
-    /// N-cube at voxelPos, or adds the N-cube one step out along the face). So the cube is known before anything changes:
+    /// CHISEL EDITING. Every chisel stroke reaches the game through UpdateVoxel with the aimed voxel, the face and
+    /// add/remove; the mode decides the rest (public vssurvivalmod ChiselMode.Apply: a size-N mode removes the N-cube
+    /// at voxelPos, or adds the N-cube one step out along the face). So the cube is known before anything changes:
     /// refused only if it would go into a stored item or take away the voxel layer an item stands on. Items never move.
-    /// Rename always passes; rotate, flip and any mode that changes the block its own way are refused while items are in it.
+    /// Rename always passes; rotate, flip and any mode that changes the block its own way are refused while items are
+    /// in it.
     /// </summary>
     static bool Chisel(BlockEntityChisel __instance, IPlayer byPlayer, Vec3i voxelPos, BlockFacing facing, bool isBreak)
     {
@@ -275,8 +274,7 @@ public sealed class ChiselShelfSystem : ModSystem
                 var accessor = __instance.Api.World.BlockAccessor;
                 foreach (var lower in BEUniversalDisplay.StorageGuestsAt(accessor, __instance.Pos))
                     foreach (var box in lower.AutoBoxesAt(__instance.Pos)) items.Add((box, false));
-                // ITEMS RESTING ON TOP (Calm, 2026-10-19: "if placed on a block you can chisel under the item ... the ground
-                // display side of thing"): a Ground Display pile in the block above stands its items on this block's top
+                // ITEMS RESTING ON TOP: a Ground Display pile in the block above stands its items on this block's top
                 // and follows it down, and items on the lowest floor of a chiselled block above rest on it too. Their
                 // boxes are in the upper block, so move them down one block into this one.
                 var above = BEUniversalDisplay.At(accessor, __instance.Pos.UpCopy());

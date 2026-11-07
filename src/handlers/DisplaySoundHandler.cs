@@ -41,12 +41,9 @@ namespace UniversalDisplayLib
         /// }
         /// </code>
         ///
-        /// Absent keys keep the sounds this mod has always used, so existing content is
-        /// unaffected by the whole feature.
+        /// Absent keys keep the default sounds.
         ///
-        /// **A domain-less path resolves in the DECLARING BLOCK'S domain, not `game:`** — the
-        /// gotcha that once made the custom window silent. That is the right default here: a
-        /// modder writing `"sounds/block/mine"` means their own asset. Write `game:` explicitly
+        /// **A domain-less path resolves in the DECLARING BLOCK'S domain, not `game:`** A modder writing `"sounds/block/mine"` means their own asset. Write `game:` explicitly
         /// for a vanilla one.
         /// </summary>
         private AssetLocation SoundFor(string key, string fallback)
@@ -63,15 +60,13 @@ namespace UniversalDisplayLib
         /// <summary>
         /// The sound a block ASKED for, or null when it named none — no fallback.
         ///
-        /// **This is what makes rain opt-in.** Every other sound has a sensible default: a
-        /// block that opens should make some noise even if its author never thought about it.
-        /// Rain does not work that way — patter on glass is a property of a WINDOW, and a
-        /// cabinet or a crate has no business playing it just because nobody said otherwise.
-        /// So the rain path asks this, and silence is the answer for anything that has not
-        /// declared a rain sound.
+        /// **This is what makes rain opt-in.** Every other sound has a sensible default: a block that opens should make
+        /// some noise even if its author never thought about it. Rain does not work that way — patter on glass is a
+        /// property of a WINDOW, and a cabinet or a crate has no business playing it just because nobody said
+        /// otherwise. So the rain path asks this, and silence is the answer for anything that has not declared a rain
+        /// sound.
         ///
-        /// That retired the old <c>disableRainSound</c> attribute: an opt-OUT only made sense
-        /// while the sound was on by default. Deleting the `rain` line is now the off switch.
+        /// Deleting the `rain` line is the off switch.
         /// </summary>
         public static AssetLocation DeclaredSound(Block block, string key)
         {
@@ -82,17 +77,15 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Plays the open/close sound at the block's position — a swoosh unless the block
-        /// names something else.
+        /// Plays the open/close sound at the block's position — a swoosh unless the block names something else.
         /// </summary>
         /// <remarks>
         /// <paramref name="solid"/>: the panes that moved do not seal a room (shutters, display doors) - the
-        /// `toggleSolid` sound (a door) instead of the glassy `toggle` one. Played HERE, on each client, for every
-        /// pane change, so each player's "Open / close volume" setting applies - including 0, off (2026-10-12: a
-        /// player asked for a way to turn these off). The door sound used to be played by the server, which reached
-        /// everyone but the player who clicked and could not be turned down.
-        /// </remarks>
-        /// <summary>A pane's own open or close sound (FrameBoxGroup.OpenSound / CloseSound), at the player's open/close volume.</summary>
+        /// `toggleSolid` sound (a door) instead of the glassy `toggle` one. Played HERE, on each client, for every pane
+        /// change, so each player's "Open / close volume" setting applies - including 0, off. </remarks>
+        /// <summary>
+        /// A pane's own open or close sound (FrameBoxGroup.OpenSound / CloseSound), at the player's open/close volume.
+        /// </summary>
         public void PlayPaneSound(string sound)
         {
             if (_capi == null || string.IsNullOrWhiteSpace(sound)) return;
@@ -141,18 +134,14 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// Drops the shared rain sound outright. Called from <c>StartClientSide</c>, because
-        /// <see cref="SharedSounds"/> is a static and statics outlive a world.
+        /// Drops the shared rain sound outright. Called from <c>StartClientSide</c>, because <see cref="SharedSounds"/>
+        /// is a static and statics outlive a world.
         ///
-        /// The entry is normally removed by the owning window's <see cref="Dispose"/> on
-        /// unload, so this is usually a no-op — but ONE window owns the sound and every other
-        /// window's tick bails out early while that entry looks alive
-        /// (<c>existing.owner != _be.Pos</c>, so nobody else may stop it). Carry a stale entry
-        /// into a second world and its <c>owner</c> is a position no window there matches, so
-        /// the rain sound can neither be stopped nor replaced for the rest of the session.
-        ///
-        /// Same trap as <c>PlacementRotation.Local</c>, <c>ForceFootprintBox</c> and
-        /// <c>LiveClientInstances</c>, all cleared in the same place.
+        /// The entry is normally removed by the owning window's <see cref="Dispose"/> on unload, so this is usually a
+        /// no-op — but ONE window owns the sound and every other window's tick bails out early while that entry looks
+        /// alive (<c>existing.owner != _be.Pos</c>, so nobody else may stop it). Carry a stale entry into a second
+        /// world and its <c>owner</c> is a position no window there matches, so the rain sound can neither be stopped
+        /// nor replaced for the rest of the session.
         /// </summary>
         public static void ResetShared()
         {
@@ -198,9 +187,8 @@ namespace UniversalDisplayLib
 
                 if (soundAlive)
                 {
-                    // ONLY THE OWNER KEEPS IT GOING (code check 2026-10-22): every loaded display, shelves included, used to
-                    // move and re-level the one rain sound 4 times a second, each reading the climate. Another window takes
-                    // over once the owner lets it go.
+                    // Only the owner keeps it going, or every loaded display would re-level the one rain sound 4 times
+                    // a second. Another window takes over once the owner lets it go.
                     if (existing.owner != _be.Pos) return;
 
                     existing.sound.SetPosition(_capi.World.Player.Entity.Pos.XYZFloat);
@@ -278,7 +266,7 @@ namespace UniversalDisplayLib
         /// <summary>
         /// Frees a sound once its fade-out has had time to finish. The rain loop is loaded with DisposeOnFinish false
         /// and a faded-out sound has not "finished", so without this every stop of the rain (it ending, or the player
-        /// walking out of range) left one sound behind for the rest of the session (fixed 2026-10-22).
+        /// walking out of range) left one sound behind for the rest of the session.
         /// </summary>
         private void DisposeAfterFade(ILoadedSound sound)
         {

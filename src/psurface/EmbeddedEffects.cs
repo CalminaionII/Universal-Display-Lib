@@ -8,7 +8,7 @@ namespace UniversalDisplayLib;
 
 public partial class BEUniversalDisplay
 {
-    sealed record EmbeddedEmitter(Vec3f Position, AdvancedParticleProperties[] Properties);
+    sealed record EmbeddedEmitter(string SlotId, Vec3f Position, AdvancedParticleProperties[] Properties);
     sealed record EmbeddedEffectsSnapshot(byte[] Light, EmbeddedEmitter[] Emitters);
     static readonly EmbeddedEffectsSnapshot NoEmbeddedEffects = new(null, Array.Empty<EmbeddedEmitter>());
     volatile EmbeddedEffectsSnapshot embeddedEffects = NoEmbeddedEffects;
@@ -17,9 +17,8 @@ public partial class BEUniversalDisplay
     bool embeddedEffectsQueued, embeddedEffectsFailureLogged;
     public Action EmbeddedEffectsChanged { get; set; }
 
-    // ONLY WHEN SOMETHING CHANGED (code check 2026-10-22): the 1 s tick used to redo every item's light and particles
-    // each time. Content changes refresh straight away, so the tick now only retries a refresh that met an item not
-    // resolved yet, plus a 10 s safety pass.
+    // Only when something changed: content changes refresh straight away, so the tick only retries a refresh that met
+    // an item not resolved yet, plus a 10 s safety pass.
     bool embeddedEffectsStale = true;
     int embeddedEffectsIdleTicks;
     const int EmbeddedEffectsSafetyTicks = 10;
@@ -65,13 +64,13 @@ public partial class BEUniversalDisplay
                 var stack = kv.Value?.Itemstack;
                 if (stack == null) continue;
                 if (stack.Collectible == null) { unresolved = true; continue; }
-                var hsv = stack.Collectible.GetLightHsv(Api.World.BlockAccessor, null, stack);
+                var hsv = BEUniversalDisplay.StoredGlowIgnored(stack) ? null : stack.Collectible.GetLightHsv(Api.World.BlockAccessor, null, stack);
                 if (hsv?.Length >= 3 && hsv[2] > (light?[2] ?? 0)) light = new[] { hsv[0], hsv[1], hsv[2] };
                 if (capi == null) continue;
                 var properties = ParticlesFor(kv.Value, CategoryForSlot(kv.Key), out var offset);
                 var position = properties == null ? null : SlotEmitPosition(kv.Key, kv.Value, offset, slots);
                 if (position == null) continue;
-                emitters.Add(new(position, properties.Where(prop => prop != null).Select(prop =>
+                emitters.Add(new(kv.Key, position, properties.Where(prop => prop != null).Select(prop =>
                 {
                     var copy = prop.Clone();
                     copy.basePos = new Vec3d();
@@ -110,8 +109,10 @@ public partial class BEUniversalDisplay
             foreach (var emitter in snapshot.Emitters)
                 foreach (var prop in emitter.Properties)
                 {
+                    // a levitating item's flame bobs and turns with it (LevitatingDisplay.cs FollowHover)
+                    var at = FollowHover(emitter.SlotId, emitter.Position);
                     prop.WindAffectednesAtPos = wind;
-                    prop.basePos.Set(pos.X + emitter.Position.X, pos.InternalY + emitter.Position.Y, pos.Z + emitter.Position.Z);
+                    prop.basePos.Set(pos.X + at.X, pos.InternalY + at.Y, pos.Z + at.Z);
                     manager.Spawn(prop);
                 }
     }

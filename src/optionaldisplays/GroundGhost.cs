@@ -40,10 +40,10 @@ namespace UniversalDisplayLib.OptionalDisplays
         static (bool Found, BEUniversalDisplay Target, BlockSelection On) lastAnswer;
 
         /// <summary>
-        /// <see cref="Target"/> for the frame being drawn. The ghost and a chiselled block's outline (ChiselShelfSystem)
-        /// both ask it every frame with the same aim, and on a carved block the answer is not cheap - so the second ask in
-        /// the same game millisecond, same aim, held stack and mode gets the first answer (code check 2026-10-22).
-        /// Main thread only. A click asks <see cref="Target"/> itself.
+        /// <see cref="Target"/> for the frame being drawn. The ghost and a chiselled block's outline
+        /// (ChiselShelfSystem) both ask it every frame with the same aim, and on a carved block the answer is not cheap
+        /// - so the second ask in the same game millisecond, same aim, held stack and mode gets the first answer. Main
+        /// thread only. A click asks <see cref="Target"/> itself.
         /// </summary>
         public static bool TargetThisFrame(ICoreClientAPI capi, ItemSlot held, BlockSelection aimed, bool anyDisplayable,
                                            out BEUniversalDisplay target, out BlockSelection onTarget)
@@ -83,11 +83,11 @@ namespace UniversalDisplayLib.OptionalDisplays
                 return carved.PreviewFloor(capi, aimed, floor, out target, out onTarget);
 
             // An aim ON a display block (a pile, a window, a shelf) or reaching one through another block (a chiselled
-            // block carrying a pile's boxes, a tall stack's filler) is that block's own right-click - place, stack, take,
-            // pour into a pot, fill a bowl (Calm: "It still needs to be able to take liquids like the lib already does").
-            // Items on a pile are solid, so without this the top of one read as ground to start a new pile on.
+            // block carrying a pile's boxes, a tall stack's filler) is that block's own right-click - place, stack,
+            // take, pour into a pot, fill a bowl. Items on a pile are solid, so without this the top of one read as
+            // ground to start a new pile on.
             IBlockAccessor aimBa = capi.World.BlockAccessor;
-            if (aimBa.GetBlockEntity(aimed.Position)?.GetBehavior<BEBehaviorChiselShelf>()?.Display is { } embedded
+            if (aimBa.GetBlockEntity(aimed.Position)?.GetBehavior<BEBehaviorChiselShelf>()?.Display != null
                 && ChiselShelfSystem.EmbeddedAim(capi.World, aimed) != null) return false;
             if (aimBa.GetBlockEntity(aimed.Position) is BEUniversalDisplay) return false;
             BlockSelection owner = BEUniversalDisplay.WindowSelection(aimBa, aimed);

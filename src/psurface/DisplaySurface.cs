@@ -114,19 +114,14 @@ namespace UniversalDisplayLib
         public IEnumerable<CuboidfWithId> BuildGridBoxes(int maxXDivisions, int maxZDivisions,
                                                         int stepsPerVoxel = 1)
         {
-            // `stepsPerVoxel` is the ONLY thing standing between one pad per voxel and finer
-            // placement — the clamp to Size.Width is what capped it, not the id format and not
-            // the arithmetic. At 2 a full-width surface asks for 32 divisions, which is exactly
-            // what maxXDivisions already defaults to.
+            // `stepsPerVoxel` is the ONLY thing standing between one pad per voxel and finer placement — the clamp to
+            // Size.Width is what capped it, not the id format and not the arithmetic. At 2 a full-width surface asks
+            // for 32 divisions, which is exactly what maxXDivisions already defaults to.
             //
-            // The ids come out fractional (0, 0.5, 1, 1.5 …) and that needs NO format change:
-            // DisplaySlotId.Encode already writes X and Z as invariant-culture floats and Decode
-            // already float.TryParses them, so "0-3.5-2" round-trips today. That matters more
-            // than it looks — the earlier sub-voxel attempt was reverted because the position
-            // was recomputed independently on client and server from HitPosition, and the
-            // session log's own conclusion was that it has to TRAVEL in the slot id instead.
-            // Here it does, by construction: the client sends the id, the server places at it,
-            // and there is nothing to derive twice.
+            // The ids come out fractional (0, 0.5, 1, 1.5 …) and that needs NO format change: DisplaySlotId.Encode
+            // already writes X and Z as invariant-culture floats and Decode already float.TryParses them, so "0-3.5-2"
+            // round-trips today. The position travels in the slot id: the client sends the id, the server places at it,
+            // and nothing is derived twice.
             int steps = Math.Max(1, stepsPerVoxel);
             int xDiv = Math.Max(1, Math.Min(maxXDivisions, Size.Width * steps));
             int zDiv = Math.Max(1, Math.Min(maxZDivisions, Size.Length * steps));

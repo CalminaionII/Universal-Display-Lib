@@ -89,7 +89,7 @@ namespace UniversalDisplayLib
             return base.OnBlockInteractStart(world, byPlayer, blockSel);
         }
 
-        // ── Another window's leaf open into this block (BEUniversalDisplay Guests, 2026-10-07) ──
+        // ── Another window's leaf open into this block ──
         // Breaking it, its sounds, its name and its info are that window's, as a click on it is.
 
         /// <summary>The guest selection the player at this block aims at, or null.</summary>
@@ -168,6 +168,16 @@ namespace UniversalDisplayLib
             return b != null && b.CanAttachBlockAt(world.BlockAccessor, this, below, BlockFacing.UP);
         }
 
+        /// <summary>
+        /// NO VANILLA SNOW LAYER ON TOP. The game's snow puts a whole-block snow layer in the space above any block
+        /// whose top side counts as solid (Block.AllowSnowCoverage = SideSolid up; vsessentials
+        /// WeatherSimulationSnowAccum) - a shutter or window reaches only part of its block, so the layer floated out
+        /// from the wall like a ledge. Display blocks keep their solid top for everything else but take no snow; a
+        /// blocktype that wants it sets "allowSnowCover": true. (Fillers the same - AutoBoxesFiller.)
+        /// </summary>
+        public override bool AllowSnowCoverage(IWorldAccessor world, BlockPos blockPos) =>
+            Attributes?["allowSnowCover"].AsBool(false) == true && base.AllowSnowCoverage(world, blockPos);
+
         /// <summary>Light comes from whatever is stored on the sills.</summary>
         public override byte[] GetLightHsv(IBlockAccessor blockAccessor, BlockPos pos, ItemStack stack = null)
         {
@@ -237,7 +247,7 @@ namespace UniversalDisplayLib
         /// <summary>Drops the obtainable counterpart, always in its closed state.</summary>
         public override ItemStack[] GetDrops(IWorldAccessor world, BlockPos pos, IPlayer byPlayer, float dropQuantityMultiplier = 1f)
         {
-            // An upper segment of a pre-1.1.4 chain window is not an item
+            // An upper segment of an old chain window is not an item
             if (Attributes?["legacySegment"].AsBool(false) == true) return Array.Empty<ItemStack>();
 
             Block dropBlock = ResolveDropBlock(world);
@@ -258,24 +268,12 @@ namespace UniversalDisplayLib
         /// <summary>
         /// The name shown for a PLACED block — this block's own, not its drop's.
         ///
-        /// Vanilla's <c>Block.GetPlacedBlockName</c> derives the name from
-        /// <see cref="OnPickBlock"/>, and OnPickBlock here deliberately hands back the
-        /// obtainable counterpart rather than this block. For an edge variant — which is
-        /// never obtainable directly, so <c>ResolveDropBlock</c> falls through to
-        /// <c>GetNextTarget</c> — that means the info box showed **the name of whatever the
-        /// block swaps to**.
+        /// Vanilla's <c>Block.GetPlacedBlockName</c> derives the name from <see cref="OnPickBlock"/>, and OnPickBlock
+        /// here deliberately hands back the obtainable counterpart rather than this block. For an edge variant — which
+        /// is never obtainable directly, so <c>ResolveDropBlock</c> falls through to <c>GetNextTarget</c> — the info
+        /// box would show the name of whatever the block swaps to.
         ///
-        /// It went unnoticed because each edge style swapped back to its own partner, which
-        /// shares its lang entry: <c>leftedge</c> borrowed "Left Opening Window" from
-        /// <c>left</c> and looked right. It only became visible once a swap chain crossed
-        /// sides — which the left/right mirror was the first feature to do — at which point <c>leftedge</c> started
-        /// announcing itself as the RIGHT window — reported as "the edge ones aren't
-        /// updating their names", and misdiagnosed several times over as a lang problem, a
-        /// stale cache, crossed shape files and a client sync issue. It was none of those:
-        /// the server, the lang file and the swap were correct throughout.
-        ///
-        /// Drops and middle-click keep resolving to the obtainable block, which is
-        /// deliberate and unchanged. Only the displayed name is corrected.
+        /// Drops and middle-click keep resolving to the obtainable block.
         /// </summary>
         public override string GetPlacedBlockName(IWorldAccessor world, BlockPos pos)
         {
@@ -304,15 +302,14 @@ namespace UniversalDisplayLib
         }
 
         /// <summary>
-        /// The handbook's "Drops when broken" in the PAGE's materials (Calm, 2026-10-08: a larch / quartz window's
-        /// page showed its drop plain). The game builds handbook drops from the block's drop list, which carries
-        /// no materials; this gives each drop that uses UDMaterials the page stack's.
+        /// The handbook's "Drops when broken" in the PAGE's materials. The game builds handbook drops from the block's
+        /// drop list, which carries no materials; this gives each drop that uses UDMaterials the page stack's.
         ///
-        /// THE DROP FLIPS WITH THE RECIPE (Calm, 2026-10-14: "Can we cycle the drop to match the recipe changing"): a block
-        /// made by a material recipe gets one drop per material set, in the recipe slideshow's order (MaterialsSystem
-        /// .CycleCombos, from the page's materials) - the handbook merges drops of one item into ONE flipping icon when the
-        /// item has a handbook groupBy (vsapi SlideshowItemstackTextComponent), so only then; without one they would show
-        /// side by side, and the drop stays the page's own. The two flip on their own one-second timers.
+        /// THE DROP FLIPS WITH THE RECIPE: a block made by a material recipe gets one drop per material set, in the
+        /// recipe slideshow's order (MaterialsSystem .CycleCombos, from the page's materials) - the handbook merges
+        /// drops of one item into ONE flipping icon when the item has a handbook groupBy (vsapi
+        /// SlideshowItemstackTextComponent), so only then; without one they would show side by side, and the drop stays
+        /// the page's own. The two flip on their own one-second timers.
         /// </summary>
         public override BlockDropItemStack[] GetDropsForHandbook(ItemStack handbookStack, IPlayer forPlayer)
         {
@@ -320,8 +317,8 @@ namespace UniversalDisplayLib
             var types = Materials.BlockBehaviorMaterials.TypesOf(handbookStack?.Attributes);
             if (drops == null || types.Count == 0) return drops;
 
-            // The handbook asks EVERY block for its drops on EVERY page open (vssurvivalmod GetHandbookInfo, for "Obtained
-            // through") - so the answer is worked out once per page stack and kept (2026-10-14: the handbook lagged).
+            // The handbook asks EVERY block for its drops on EVERY page open (vssurvivalmod GetHandbookInfo, for
+            // "Obtained through") - so the answer is worked out once per page stack and kept.
             string cacheKey = Materials.BlockBehaviorMaterials.KeyOf(types);
             lock (handbookDrops)
             {
@@ -341,10 +338,10 @@ namespace UniversalDisplayLib
             var world = api?.World;
             var result = new System.Collections.Generic.List<BlockDropItemStack>();
 
-            // ONLY WORK OUT A CYCLE THAT CAN BE SHOWN. With MaxHandbookCycle at 1 (no cycling, 2026-10-14) the cycle below
-            // can never hold more than the page's own set, so its result was always thrown away - but finding it scanned
-            // every grid recipe and every material, for each material version of each window the handbook lists. With 354
-            // mods that was 15.9 s over 1470 calls the first time the handbook opened (GitHub issue #2).
+            // ONLY WORK OUT A CYCLE THAT CAN BE SHOWN. With MaxHandbookCycle at 1 the cycle below can never hold more
+            // than the page's own set, so its result was always thrown away - but finding it scanned every grid recipe
+            // and every material, for each material version of each window the handbook lists. With 354 mods that was
+            // 15.9 s over 1470 calls the first time the handbook opened (GitHub issue #2).
             bool cycles = Materials.MaterialsSystem.MaxHandbookCycle > 1;
             foreach (var drop in drops)
             {
